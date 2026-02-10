@@ -1,0 +1,70 @@
+[package]
+name = "uniproxy"
+version = "0.1.0"
+edition = "2021"
+authors = ["uniproxy team"]
+description = "Universal test proxy for dependency health monitoring (Rust implementation with educational comments)"
+
+# Минимальная версия Rust: 1.75+ (для async/await и последних фич)
+rust-version = "1.75"
+
+[dependencies]
+# === Async Runtime ===
+# Tokio - async runtime для Rust, аналог goroutines в Go
+# Включаем: macros для #[tokio::main], rt-multi-thread для многопоточности, signal для graceful shutdown
+tokio = { version = "1.35", features = ["macros", "rt-multi-thread", "signal", "time"] }
+
+# === Web Framework ===
+# Axum - современный web framework на базе tokio и hyper
+axum = "0.7"
+
+# === HTTP Client ===
+# Reqwest - HTTP клиент для health checks
+reqwest = { version = "0.11", features = ["json"] }
+
+# === Database Clients ===
+# Redis клиент для async Rust
+redis = { version = "0.24", features = ["tokio-comp", "connection-manager"] }
+# PostgreSQL клиент
+tokio-postgres = "0.7"
+
+# === Сериализация ===
+# Serde - де-факто стандарт для сериализации в Rust
+# derive - макросы для автоматического derive Serialize/Deserialize
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# === Логирование ===
+# Tracing - structured logging (современная альтернатива log crate)
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# === Метрики ===
+# Prometheus - экспорт метрик в формате Prometheus
+prometheus = "0.13"
+# Lazy static - для ленивой инициализации static переменных
+lazy_static = "1.4"
+
+# === Error Handling ===
+# Thiserror - упрощает создание кастомных error types
+thiserror = "1.0"
+# Anyhow - для быстрого error handling (опционально)
+anyhow = "1.0"
+
+# === Утилиты ===
+# Tower - middleware framework (используется axum)
+tower = "0.4"
+tower-http = { version = "0.5", features = ["trace"] }
+# Async trait - для async методов в traits
+async-trait = "0.1"
+
+[dev-dependencies]
+# Для тестирования
+tokio-test = "0.4"
+
+[profile.release]
+# Оптимизации для production build
+opt-level = 3          # Максимальная оптимизация
+lto = true            # Link-Time Optimization - уменьшает размер бинарника
+codegen-units = 1     # Лучшая оптимизация (медленнее компиляция)
+strip = true          # Убираем debug символы из бинарника

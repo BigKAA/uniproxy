@@ -1,0 +1,33 @@
+# Rust build artifacts
+target/
+**/*.rs.bk
+
+# Cargo lock (будет скопирован явно в Dockerfile)
+# Cargo.lock
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Git
+.git/
+.gitignore
+
+# Documentation
+*.md
+!README.md
+
+# Tests
+tests/
+examples/
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+
+# Local env files
+.env
+.env.local

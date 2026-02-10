@@ -1,5 +1,4 @@
 # Binaries
-uniproxy
 *.exe
 *.dll
 *.so
@@ -27,3 +26,4 @@ Thumbs.db
 
 # AI
 .templates/
+.serena/
