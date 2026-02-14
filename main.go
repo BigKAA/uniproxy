@@ -91,6 +91,9 @@ func buildOptions(cfg *config.Config, logger *slog.Logger) ([]dephealth.Option, 
 		dephealth.WithCheckInterval(cfg.CheckInterval),
 		dephealth.WithLogger(logger),
 	}
+	if cfg.Timeout > 0 {
+		opts = append(opts, dephealth.WithTimeout(cfg.Timeout))
+	}
 
 	for _, dep := range cfg.Dependencies {
 		opt, err := buildDependencyOption(dep)
@@ -115,10 +118,57 @@ func buildDependencyOption(dep config.Dependency) (dephealth.Option, error) {
 
 	depOpts = append(depOpts, dephealth.Critical(dep.Critical))
 
-	if dep.HealthPath != "" {
-		depOpts = append(depOpts, dephealth.WithHTTPHealthPath(dep.HealthPath))
+	if dep.CheckInterval > 0 {
+		depOpts = append(depOpts, dephealth.CheckInterval(dep.CheckInterval))
+	}
+	if dep.Timeout > 0 {
+		depOpts = append(depOpts, dephealth.Timeout(dep.Timeout))
 	}
 
+	// Type-specific options.
+	switch dep.Type {
+	case "http":
+		if dep.HealthPath != "" {
+			depOpts = append(depOpts, dephealth.WithHTTPHealthPath(dep.HealthPath))
+		}
+		if dep.TLS != nil {
+			depOpts = append(depOpts, dephealth.WithHTTPTLS(*dep.TLS))
+		}
+		if dep.TLSSkipVerify != nil {
+			depOpts = append(depOpts, dephealth.WithHTTPTLSSkipVerify(*dep.TLSSkipVerify))
+		}
+	case "grpc":
+		if dep.GRPCServiceName != "" {
+			depOpts = append(depOpts, dephealth.WithGRPCServiceName(dep.GRPCServiceName))
+		}
+		if dep.TLS != nil {
+			depOpts = append(depOpts, dephealth.WithGRPCTLS(*dep.TLS))
+		}
+		if dep.TLSSkipVerify != nil {
+			depOpts = append(depOpts, dephealth.WithGRPCTLSSkipVerify(*dep.TLSSkipVerify))
+		}
+	case "postgres":
+		if dep.PostgresQuery != "" {
+			depOpts = append(depOpts, dephealth.WithPostgresQuery(dep.PostgresQuery))
+		}
+	case "mysql":
+		if dep.MySQLQuery != "" {
+			depOpts = append(depOpts, dephealth.WithMySQLQuery(dep.MySQLQuery))
+		}
+	case "redis":
+		if dep.RedisPassword != "" {
+			depOpts = append(depOpts, dephealth.WithRedisPassword(dep.RedisPassword))
+		}
+		if dep.RedisDB != nil {
+			depOpts = append(depOpts, dephealth.WithRedisDB(*dep.RedisDB))
+		}
+	case "amqp":
+		if dep.AMQPURL != "" {
+			depOpts = append(depOpts, dephealth.WithAMQPURL(dep.AMQPURL))
+		}
+	}
+
+	// Factory by type.
 	switch dep.Type {
 	case "http":
 		return dephealth.HTTP(dep.Name, depOpts...), nil
@@ -128,6 +178,14 @@ func buildDependencyOption(dep config.Dependency) (dephealth.Option, error) {
 		return dephealth.Postgres(dep.Name, depOpts...), nil
 	case "grpc":
 		return dephealth.GRPC(dep.Name, depOpts...), nil
+	case "tcp":
+		return dephealth.TCP(dep.Name, depOpts...), nil
+	case "mysql":
+		return dephealth.MySQL(dep.Name, depOpts...), nil
+	case "amqp":
+		return dephealth.AMQP(dep.Name, depOpts...), nil
+	case "kafka":
+		return dephealth.Kafka(dep.Name, depOpts...), nil
 	default:
 		return nil, fmt.Errorf("unsupported dependency type %q for %q", dep.Type, dep.Name)
 	}

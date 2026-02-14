@@ -15,18 +15,41 @@ type Config struct {
 	ListenAddr    string
 	LogLevel      string
 	CheckInterval time.Duration
+	Timeout       time.Duration // global check timeout (0 = SDK default)
 	Dependencies  []Dependency
 }
 
 // Dependency describes a single dependency to health-check.
 type Dependency struct {
 	Name       string
-	Type       string // http, redis, postgres, grpc
+	Type       string // http, redis, postgres, grpc, tcp, mysql, amqp, kafka
 	URL        string
 	Host       string
 	Port       string
 	Critical   bool
 	HealthPath string // HTTP-specific
+
+	// Per-dependency timing (0 = use global).
+	CheckInterval time.Duration
+	Timeout       time.Duration
+
+	// TLS options (HTTP, gRPC).
+	TLS           *bool
+	TLSSkipVerify *bool
+
+	// gRPC-specific.
+	GRPCServiceName string
+
+	// PostgreSQL/MySQL-specific.
+	PostgresQuery string
+	MySQLQuery    string
+
+	// Redis-specific.
+	RedisPassword string
+	RedisDB       *int
+
+	// AMQP-specific.
+	AMQPURL string
 }
 
 // Load parses configuration from environment variables.
@@ -64,6 +87,15 @@ func Load() (*Config, error) {
 	}
 	cfg.CheckInterval = time.Duration(sec * float64(time.Second))
 
+	// Global timeout (optional).
+	if ts := os.Getenv("DEPHEALTH_TIMEOUT"); ts != "" {
+		tSec, err := strconv.ParseFloat(ts, 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid DEPHEALTH_TIMEOUT %q: %w", ts, err)
+		}
+		cfg.Timeout = time.Duration(tSec * float64(time.Second))
+	}
+
 	// Dependencies (optional — service may have none).
 	depsStr := os.Getenv("DEPHEALTH_DEPS")
 	if depsStr != "" {
@@ -95,7 +127,7 @@ func parseDeps(s string) ([]Dependency, error) {
 		depType := parts[1]
 
 		switch depType {
-		case "http", "redis", "postgres", "grpc":
+		case "http", "redis", "postgres", "grpc", "tcp", "mysql", "amqp", "kafka":
 		default:
 			return nil, fmt.Errorf("dependency %q: unsupported type %q", name, depType)
 		}
@@ -144,9 +176,78 @@ func parseSingleDep(name, depType string) (Dependency, error) {
 			name, prefix, critStr)
 	}
 
-	// HTTP-specific options.
-	if depType == "http" {
+	// Per-dependency check interval.
+	if v := os.Getenv(prefix + "CHECK_INTERVAL"); v != "" {
+		s, err := strconv.ParseFloat(v, 64)
+		if err != nil {
+			return dep, fmt.Errorf("dependency %q: invalid %sCHECK_INTERVAL %q: %w", name, prefix, v, err)
+		}
+		dep.CheckInterval = time.Duration(s * float64(time.Second))
+	}
+
+	// Per-dependency timeout.
+	if v := os.Getenv(prefix + "TIMEOUT"); v != "" {
+		s, err := strconv.ParseFloat(v, 64)
+		if err != nil {
+			return dep, fmt.Errorf("dependency %q: invalid %sTIMEOUT %q: %w", name, prefix, v, err)
+		}
+		dep.Timeout = time.Duration(s * float64(time.Second))
+	}
+
+	// Type-specific options.
+	switch depType {
+	case "http":
 		dep.HealthPath = os.Getenv(prefix + "HEALTH_PATH")
+		if v := os.Getenv(prefix + "TLS"); v != "" {
+			b, err := parseBool(v)
+			if err != nil {
+				return dep, fmt.Errorf("dependency %q: invalid %sTLS: %w", name, prefix, err)
+			}
+			dep.TLS = &b
+		}
+		if v := os.Getenv(prefix + "TLS_SKIP_VERIFY"); v != "" {
+			b, err := parseBool(v)
+			if err != nil {
+				return dep, fmt.Errorf("dependency %q: invalid %sTLS_SKIP_VERIFY: %w", name, prefix, err)
+			}
+			dep.TLSSkipVerify = &b
+		}
+
+	case "grpc":
+		dep.GRPCServiceName = os.Getenv(prefix + "GRPC_SERVICE_NAME")
+		if v := os.Getenv(prefix + "TLS"); v != "" {
+			b, err := parseBool(v)
+			if err != nil {
+				return dep, fmt.Errorf("dependency %q: invalid %sTLS: %w", name, prefix, err)
+			}
+			dep.TLS = &b
+		}
+		if v := os.Getenv(prefix + "TLS_SKIP_VERIFY"); v != "" {
+			b, err := parseBool(v)
+			if err != nil {
+				return dep, fmt.Errorf("dependency %q: invalid %sTLS_SKIP_VERIFY: %w", name, prefix, err)
+			}
+			dep.TLSSkipVerify = &b
+		}
+
+	case "postgres":
+		dep.PostgresQuery = os.Getenv(prefix + "POSTGRES_QUERY")
+
+	case "mysql":
+		dep.MySQLQuery = os.Getenv(prefix + "MYSQL_QUERY")
+
+	case "redis":
+		dep.RedisPassword = os.Getenv(prefix + "REDIS_PASSWORD")
+		if v := os.Getenv(prefix + "REDIS_DB"); v != "" {
+			db, err := strconv.Atoi(v)
+			if err != nil {
+				return dep, fmt.Errorf("dependency %q: invalid %sREDIS_DB %q: %w", name, prefix, v, err)
+			}
+			dep.RedisDB = &db
+		}
+
+	case "amqp":
+		dep.AMQPURL = os.Getenv(prefix + "AMQP_URL")
 	}
 
 	return dep, nil
@@ -163,4 +264,16 @@ func getEnv(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// parseBool parses common boolean strings.
+func parseBool(s string) (bool, error) {
+	switch strings.ToLower(s) {
+	case "yes", "true", "1":
+		return true, nil
+	case "no", "false", "0":
+		return false, nil
+	default:
+		return false, fmt.Errorf("invalid boolean value %q (expected yes/no/true/false/1/0)", s)
+	}
 }

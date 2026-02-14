@@ -17,6 +17,10 @@ image:
 # Check interval in seconds (passed as DEPHEALTH_CHECK_INTERVAL env var).
 checkInterval: "10"
 
+# Global check timeout in seconds (passed as DEPHEALTH_TIMEOUT env var).
+# Empty string means SDK default.
+timeout: ""
+
 resources:
   requests:
     cpu: 10m

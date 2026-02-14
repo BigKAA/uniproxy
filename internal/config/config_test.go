@@ -144,7 +144,7 @@ func TestLoad_NoDeps(t *testing.T) {
 func TestLoad_InvalidDepType(t *testing.T) {
 	setEnvs(t, map[string]string{
 		"DEPHEALTH_NAME": "app",
-		"DEPHEALTH_DEPS": "svc:mysql",
+		"DEPHEALTH_DEPS": "svc:mongodb",
 	})
 
 	_, err := Load()
@@ -180,6 +180,170 @@ func TestLoad_MissingURL(t *testing.T) {
 	_, err := Load()
 	if err == nil {
 		t.Fatal("expected error for missing URL/HOST+PORT")
+	}
+}
+
+func TestLoad_NewDepTypes(t *testing.T) {
+	setEnvs(t, map[string]string{
+		"DEPHEALTH_NAME":             "app",
+		"DEPHEALTH_DEPS":             "t:tcp,m:mysql,a:amqp,k:kafka",
+		"DEPHEALTH_T_HOST":           "tcp.svc",
+		"DEPHEALTH_T_PORT":           "9000",
+		"DEPHEALTH_T_CRITICAL":       "yes",
+		"DEPHEALTH_M_URL":            "mysql://user:pass@mysql.svc:3306/db",
+		"DEPHEALTH_M_CRITICAL":       "no",
+		"DEPHEALTH_A_HOST":           "amqp.svc",
+		"DEPHEALTH_A_PORT":           "5672",
+		"DEPHEALTH_A_CRITICAL":       "yes",
+		"DEPHEALTH_K_HOST":           "kafka.svc",
+		"DEPHEALTH_K_PORT":           "9092",
+		"DEPHEALTH_K_CRITICAL":       "no",
+	})
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(cfg.Dependencies) != 4 {
+		t.Fatalf("len(Dependencies) = %d, want 4", len(cfg.Dependencies))
+	}
+
+	types := []string{"tcp", "mysql", "amqp", "kafka"}
+	for i, want := range types {
+		if cfg.Dependencies[i].Type != want {
+			t.Errorf("dep[%d].Type = %q, want %q", i, cfg.Dependencies[i].Type, want)
+		}
+	}
+}
+
+func TestLoad_GlobalTimeout(t *testing.T) {
+	setEnvs(t, map[string]string{
+		"DEPHEALTH_NAME":    "app",
+		"DEPHEALTH_TIMEOUT": "5",
+	})
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Timeout != 5*time.Second {
+		t.Errorf("Timeout = %v, want %v", cfg.Timeout, 5*time.Second)
+	}
+}
+
+func TestLoad_PerDepOptions(t *testing.T) {
+	setEnvs(t, map[string]string{
+		"DEPHEALTH_NAME":                      "app",
+		"DEPHEALTH_DEPS":                      "web:http,rpc:grpc,pg:postgres,r:redis",
+		"DEPHEALTH_WEB_URL":                   "https://web.svc:443",
+		"DEPHEALTH_WEB_CRITICAL":              "yes",
+		"DEPHEALTH_WEB_CHECK_INTERVAL":        "30",
+		"DEPHEALTH_WEB_TIMEOUT":               "5",
+		"DEPHEALTH_WEB_TLS":                   "true",
+		"DEPHEALTH_WEB_TLS_SKIP_VERIFY":       "yes",
+		"DEPHEALTH_RPC_HOST":                  "grpc.svc",
+		"DEPHEALTH_RPC_PORT":                  "443",
+		"DEPHEALTH_RPC_CRITICAL":              "no",
+		"DEPHEALTH_RPC_TLS":                   "true",
+		"DEPHEALTH_RPC_TLS_SKIP_VERIFY":       "false",
+		"DEPHEALTH_RPC_GRPC_SERVICE_NAME":     "myservice",
+		"DEPHEALTH_PG_URL":                    "postgres://pg.svc:5432/db",
+		"DEPHEALTH_PG_CRITICAL":               "yes",
+		"DEPHEALTH_PG_POSTGRES_QUERY":         "SELECT 1",
+		"DEPHEALTH_R_HOST":                    "redis.svc",
+		"DEPHEALTH_R_PORT":                    "6379",
+		"DEPHEALTH_R_CRITICAL":                "no",
+		"DEPHEALTH_R_REDIS_PASSWORD":          "secret",
+		"DEPHEALTH_R_REDIS_DB":                "2",
+	})
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(cfg.Dependencies) != 4 {
+		t.Fatalf("len(Dependencies) = %d, want 4", len(cfg.Dependencies))
+	}
+
+	// HTTP dep with TLS and timing.
+	web := cfg.Dependencies[0]
+	if web.CheckInterval != 30*time.Second {
+		t.Errorf("web.CheckInterval = %v, want 30s", web.CheckInterval)
+	}
+	if web.Timeout != 5*time.Second {
+		t.Errorf("web.Timeout = %v, want 5s", web.Timeout)
+	}
+	if web.TLS == nil || !*web.TLS {
+		t.Error("web.TLS should be true")
+	}
+	if web.TLSSkipVerify == nil || !*web.TLSSkipVerify {
+		t.Error("web.TLSSkipVerify should be true")
+	}
+
+	// gRPC dep.
+	rpc := cfg.Dependencies[1]
+	if rpc.GRPCServiceName != "myservice" {
+		t.Errorf("rpc.GRPCServiceName = %q, want %q", rpc.GRPCServiceName, "myservice")
+	}
+	if rpc.TLS == nil || !*rpc.TLS {
+		t.Error("rpc.TLS should be true")
+	}
+	if rpc.TLSSkipVerify == nil || *rpc.TLSSkipVerify {
+		t.Error("rpc.TLSSkipVerify should be false")
+	}
+
+	// Postgres dep.
+	pg := cfg.Dependencies[2]
+	if pg.PostgresQuery != "SELECT 1" {
+		t.Errorf("pg.PostgresQuery = %q, want %q", pg.PostgresQuery, "SELECT 1")
+	}
+
+	// Redis dep.
+	r := cfg.Dependencies[3]
+	if r.RedisPassword != "secret" {
+		t.Errorf("r.RedisPassword = %q, want %q", r.RedisPassword, "secret")
+	}
+	if r.RedisDB == nil || *r.RedisDB != 2 {
+		t.Errorf("r.RedisDB = %v, want 2", r.RedisDB)
+	}
+}
+
+func TestLoad_AMQPOptions(t *testing.T) {
+	setEnvs(t, map[string]string{
+		"DEPHEALTH_NAME":           "app",
+		"DEPHEALTH_DEPS":           "mq:amqp",
+		"DEPHEALTH_MQ_HOST":        "amqp.svc",
+		"DEPHEALTH_MQ_PORT":        "5672",
+		"DEPHEALTH_MQ_CRITICAL":    "yes",
+		"DEPHEALTH_MQ_AMQP_URL":    "amqp://user:pass@amqp.svc:5672/vhost",
+	})
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	dep := cfg.Dependencies[0]
+	if dep.AMQPURL != "amqp://user:pass@amqp.svc:5672/vhost" {
+		t.Errorf("AMQPURL = %q", dep.AMQPURL)
+	}
+}
+
+func TestLoad_MySQLOptions(t *testing.T) {
+	setEnvs(t, map[string]string{
+		"DEPHEALTH_NAME":             "app",
+		"DEPHEALTH_DEPS":             "db:mysql",
+		"DEPHEALTH_DB_URL":           "mysql://mysql.svc:3306/testdb",
+		"DEPHEALTH_DB_CRITICAL":      "yes",
+		"DEPHEALTH_DB_MYSQL_QUERY":   "SELECT 1",
+	})
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	dep := cfg.Dependencies[0]
+	if dep.MySQLQuery != "SELECT 1" {
+		t.Errorf("MySQLQuery = %q, want %q", dep.MySQLQuery, "SELECT 1")
 	}
 }
 

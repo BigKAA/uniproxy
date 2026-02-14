@@ -38,6 +38,10 @@ spec:
               value: ":8080"
             - name: DEPHEALTH_CHECK_INTERVAL
               value: {{ $.Values.checkInterval | quote }}
+            {{- if $.Values.timeout }}
+            - name: DEPHEALTH_TIMEOUT
+              value: {{ $.Values.timeout | quote }}
+            {{- end }}
             {{- if .connections }}
             - name: DEPHEALTH_DEPS
               value: {{ include "dephealth-uniproxy.depsValue" .connections | quote }}
@@ -57,6 +61,46 @@ spec:
             {{- if .healthPath }}
             - name: {{ $envPrefix }}_HEALTH_PATH
               value: {{ .healthPath | quote }}
+            {{- end }}
+            {{- if .checkInterval }}
+            - name: {{ $envPrefix }}_CHECK_INTERVAL
+              value: {{ .checkInterval | quote }}
+            {{- end }}
+            {{- if .timeout }}
+            - name: {{ $envPrefix }}_TIMEOUT
+              value: {{ .timeout | quote }}
+            {{- end }}
+            {{- if .tls }}
+            - name: {{ $envPrefix }}_TLS
+              value: {{ .tls | quote }}
+            {{- end }}
+            {{- if .tlsSkipVerify }}
+            - name: {{ $envPrefix }}_TLS_SKIP_VERIFY
+              value: {{ .tlsSkipVerify | quote }}
+            {{- end }}
+            {{- if .grpcServiceName }}
+            - name: {{ $envPrefix }}_GRPC_SERVICE_NAME
+              value: {{ .grpcServiceName | quote }}
+            {{- end }}
+            {{- if .postgresQuery }}
+            - name: {{ $envPrefix }}_POSTGRES_QUERY
+              value: {{ .postgresQuery | quote }}
+            {{- end }}
+            {{- if .mysqlQuery }}
+            - name: {{ $envPrefix }}_MYSQL_QUERY
+              value: {{ .mysqlQuery | quote }}
+            {{- end }}
+            {{- if .redisPassword }}
+            - name: {{ $envPrefix }}_REDIS_PASSWORD
+              value: {{ .redisPassword | quote }}
+            {{- end }}
+            {{- if .redisDB }}
+            - name: {{ $envPrefix }}_REDIS_DB
+              value: {{ .redisDB | quote }}
+            {{- end }}
+            {{- if .amqpURL }}
+            - name: {{ $envPrefix }}_AMQP_URL
+              value: {{ .amqpURL | quote }}
             {{- end }}
             {{- end }}
             {{- end }}
