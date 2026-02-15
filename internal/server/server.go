@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strconv"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -14,12 +16,13 @@ import (
 	"github.com/BigKAA/topologymetrics/sdk-go/dephealth"
 )
 
-// HealthProvider exposes dependency health status.
-type HealthProvider interface {
+// HealthChecker exposes dependency health status.
+type HealthChecker interface {
 	Health() map[string]bool
+	HealthDetails() map[string]dephealth.EndpointStatus
 }
 
-// StatusResponse is the JSON payload for GET /.
+// StatusResponse is the JSON payload for GET / (simple mode).
 type StatusResponse struct {
 	Name      string          `json:"name"`
 	PodName   string          `json:"podName"`
@@ -27,18 +30,52 @@ type StatusResponse struct {
 	Health    map[string]bool `json:"health"`
 }
 
-// Server is the uniproxy HTTP server.
-type Server struct {
-	router chi.Router
-	dh     *dephealth.DepHealth
-	name   string
+// DetailStatusResponse is the JSON payload for GET /?detail=true.
+type DetailStatusResponse struct {
+	Name         string                       `json:"name"`
+	PodName      string                       `json:"podName"`
+	Namespace    string                       `json:"namespace"`
+	Dependencies map[string]*DependencyDetail `json:"dependencies"`
 }
 
-// New creates a new Server wired to the given dephealth instance.
-func New(dh *dephealth.DepHealth, name string) *Server {
+// DependencyDetail wraps SDK EndpointStatus with an optional recursive response.
+type DependencyDetail struct {
+	dephealth.EndpointStatus
+	Response *json.RawMessage `json:"response,omitempty"`
+}
+
+// MarshalJSON produces JSON that merges EndpointStatus fields with the response field.
+func (d DependencyDetail) MarshalJSON() ([]byte, error) {
+	base, err := json.Marshal(d.EndpointStatus)
+	if err != nil {
+		return nil, err
+	}
+	if d.Response == nil {
+		return base, nil
+	}
+	// Merge: remove closing }, append ,"response":<value>}
+	result := make([]byte, 0, len(base)+len(*d.Response)+15)
+	result = append(result, base[:len(base)-1]...)
+	result = append(result, `,"response":`...)
+	result = append(result, *d.Response...)
+	result = append(result, '}')
+	return result, nil
+}
+
+// Server is the uniproxy HTTP server.
+type Server struct {
+	router       chi.Router
+	dh           HealthChecker
+	name         string
+	fetchTimeout time.Duration
+}
+
+// New creates a new Server wired to the given health checker.
+func New(dh HealthChecker, name string, fetchTimeout time.Duration) *Server {
 	s := &Server{
-		dh:   dh,
-		name: name,
+		dh:           dh,
+		name:         name,
+		fetchTimeout: fetchTimeout,
 	}
 	s.routes()
 	return s
@@ -62,16 +99,62 @@ func (s *Server) Handler() http.Handler {
 }
 
 func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	if r.URL.Query().Get("detail") == "true" {
+		s.handleDetail(w, r)
+		return
+	}
+
 	resp := StatusResponse{
 		Name:      s.name,
 		PodName:   os.Getenv("POD_NAME"),
 		Namespace: os.Getenv("NAMESPACE"),
 		Health:    s.dh.Health(),
 	}
-	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
 		slog.Error("encode response", "error", err)
 	}
+}
+
+func (s *Server) handleDetail(w http.ResponseWriter, r *http.Request) {
+	depth := parseDepth(r.URL.Query().Get("depth"))
+
+	details := s.dh.HealthDetails()
+	deps := make(map[string]*DependencyDetail, len(details))
+	for key, es := range details {
+		deps[key] = &DependencyDetail{
+			EndpointStatus: es,
+		}
+	}
+
+	// Recursive HTTP fetch will be added in Phase 3.
+	_ = depth
+
+	resp := DetailStatusResponse{
+		Name:         s.name,
+		PodName:      os.Getenv("POD_NAME"),
+		Namespace:    os.Getenv("NAMESPACE"),
+		Dependencies: deps,
+	}
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		slog.Error("encode detail response", "error", err)
+	}
+}
+
+// parseDepth parses the depth query parameter with bounds [0, 10], default 1.
+func parseDepth(s string) int {
+	if s == "" {
+		return 1
+	}
+	d, err := strconv.Atoi(s)
+	if err != nil || d < 0 {
+		return 1
+	}
+	if d > 10 {
+		return 10
+	}
+	return d
 }
 
 func (s *Server) handleHealthz(w http.ResponseWriter, _ *http.Request) {

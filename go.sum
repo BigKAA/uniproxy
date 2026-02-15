@@ -1,7 +1,5 @@
 filippo.io/edwards25519 v1.1.0 h1:FNf4tywRC1HmFuKW5xopWpigGjJKiJSV0Cqo0cJWDaA=
 filippo.io/edwards25519 v1.1.0/go.mod h1:BxyFTGdWcka3PhytdK4V28tE5sGfRvvvRV7EaN4VDT4=
-github.com/BigKAA/topologymetrics/sdk-go v0.4.0 h1:KSqVzlPgWzZRC7NRHcV/GwmHOxbaoVZ3ycFUm85mpqw=
-github.com/BigKAA/topologymetrics/sdk-go v0.4.0/go.mod h1:7J5lfbrTDB22lYdPeAcQwyXIh9GtvpfvABMXmcUeKoA=
 github.com/BigKAA/topologymetrics/sdk-go v0.4.1 h1:jOjX2G3gMRJCPxUvJYgfqFPpD4rFH2cD2Kkow5HvAQQ=
 github.com/BigKAA/topologymetrics/sdk-go v0.4.1/go.mod h1:7J5lfbrTDB22lYdPeAcQwyXIh9GtvpfvABMXmcUeKoA=
 github.com/DATA-DOG/go-sqlmock v1.5.2 h1:OcvFkGmslmlZibjAjaHm3L//6LiuBgolP7OputlJIzU=

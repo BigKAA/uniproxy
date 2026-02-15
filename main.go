@@ -65,7 +65,7 @@ func main() {
 	slog.Info("dephealth started", "name", cfg.Name)
 
 	// Start HTTP server.
-	srv := server.New(dh, cfg.Name)
+	srv := server.New(dh, cfg.Name, cfg.FetchTimeout)
 	httpServer := &http.Server{
 		Addr:    cfg.ListenAddr,
 		Handler: srv.Handler(),
