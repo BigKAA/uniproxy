@@ -42,6 +42,10 @@ spec:
             - name: DEPHEALTH_TIMEOUT
               value: {{ $.Values.timeout | quote }}
             {{- end }}
+            {{- if $.Values.fetchTimeout }}
+            - name: DEPHEALTH_FETCH_TIMEOUT
+              value: {{ $.Values.fetchTimeout | quote }}
+            {{- end }}
             {{- if .connections }}
             - name: DEPHEALTH_DEPS
               value: {{ include "dephealth-uniproxy.depsValue" .connections | quote }}

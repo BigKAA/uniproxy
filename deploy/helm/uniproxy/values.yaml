@@ -21,6 +21,10 @@ checkInterval: "10"
 # Empty string means SDK default.
 timeout: ""
 
+# Timeout in seconds for recursive HTTP detail fetch (passed as DEPHEALTH_FETCH_TIMEOUT).
+# Used by GET /?detail=true&depth=N to fetch downstream uniproxy responses.
+fetchTimeout: "5"
+
 resources:
   requests:
     cpu: 10m
