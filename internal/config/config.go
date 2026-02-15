@@ -3,6 +3,7 @@ package config
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"strconv"
 	"strings"
@@ -13,11 +14,23 @@ import (
 type Config struct {
 	Name          string
 	ListenAddr    string
-	LogLevel      string
+	Log           LogConfig
 	CheckInterval time.Duration
 	Timeout       time.Duration // global check timeout (0 = SDK default)
 	FetchTimeout  time.Duration // timeout for recursive HTTP fetch (default 5s)
 	Dependencies  []Dependency
+}
+
+// LogConfig holds logging configuration parsed from environment variables.
+type LogConfig struct {
+	Format     string // "text" (default) or "json"
+	Level      string // "debug", "info" (default), "warn", "error"
+	TimeFormat string // "rfc3339", "rfc3339nano" (default), "unix", "unixmilli"
+	AddSource  bool   // include file:line in log output (default: false)
+	TimeKey    string // JSON key for timestamp (empty = slog default "time")
+	LevelKey   string // JSON key for level (empty = slog default "level")
+	MessageKey string // JSON key for message (empty = slog default "msg")
+	SourceKey  string // JSON key for source (empty = slog default "source")
 }
 
 // Dependency describes a single dependency to health-check.
@@ -61,9 +74,15 @@ type Dependency struct {
 //
 // Optional:
 //   - LISTEN_ADDR (default ":8080")
-//   - LOG_LEVEL (default "info")
 //   - DEPHEALTH_CHECK_INTERVAL — seconds (default "10")
 //   - DEPHEALTH_FETCH_TIMEOUT — seconds, timeout for recursive HTTP detail fetch (default "5")
+//
+// Logging:
+//   - LOG_FORMAT — "text" or "json" (default "text")
+//   - LOG_LEVEL — "debug", "info", "warn", "error" (default "info")
+//   - LOG_TIME_FORMAT — "rfc3339", "rfc3339nano", "unix", "unixmilli" (default "rfc3339nano")
+//   - LOG_ADD_SOURCE — "yes"/"no" (default "no")
+//   - LOG_TIME_KEY, LOG_LEVEL_KEY, LOG_MESSAGE_KEY, LOG_SOURCE_KEY — custom JSON key names
 //
 // Per-dependency (NAME is uppercase with hyphens replaced by underscores):
 //   - DEPHEALTH_<NAME>_URL or DEPHEALTH_<NAME>_HOST + DEPHEALTH_<NAME>_PORT
@@ -72,8 +91,14 @@ type Dependency struct {
 func Load() (*Config, error) {
 	cfg := &Config{
 		ListenAddr: getEnv("LISTEN_ADDR", ":8080"),
-		LogLevel:   getEnv("LOG_LEVEL", "info"),
 	}
+
+	// Log config.
+	logCfg, err := loadLogConfig()
+	if err != nil {
+		return nil, err
+	}
+	cfg.Log = logCfg
 
 	// Application name.
 	cfg.Name = os.Getenv("DEPHEALTH_NAME")
@@ -120,6 +145,50 @@ func Load() (*Config, error) {
 	}
 
 	return cfg, nil
+}
+
+// loadLogConfig parses LOG_* environment variables into LogConfig.
+func loadLogConfig() (LogConfig, error) {
+	lc := LogConfig{
+		Format:     strings.ToLower(getEnv("LOG_FORMAT", "text")),
+		Level:      strings.ToLower(getEnv("LOG_LEVEL", "info")),
+		TimeFormat: strings.ToLower(getEnv("LOG_TIME_FORMAT", "rfc3339nano")),
+		TimeKey:    os.Getenv("LOG_TIME_KEY"),
+		LevelKey:   os.Getenv("LOG_LEVEL_KEY"),
+		MessageKey: os.Getenv("LOG_MESSAGE_KEY"),
+		SourceKey:  os.Getenv("LOG_SOURCE_KEY"),
+	}
+
+	// Validate format.
+	switch lc.Format {
+	case "text", "json":
+	default:
+		return lc, fmt.Errorf("invalid LOG_FORMAT %q (expected text/json)", lc.Format)
+	}
+
+	// Validate level.
+	var level slog.Level
+	if err := level.UnmarshalText([]byte(strings.ToUpper(lc.Level))); err != nil {
+		return lc, fmt.Errorf("invalid LOG_LEVEL %q (expected debug/info/warn/error)", lc.Level)
+	}
+
+	// Validate time format.
+	switch lc.TimeFormat {
+	case "rfc3339", "rfc3339nano", "unix", "unixmilli":
+	default:
+		return lc, fmt.Errorf("invalid LOG_TIME_FORMAT %q (expected rfc3339/rfc3339nano/unix/unixmilli)", lc.TimeFormat)
+	}
+
+	// AddSource (optional).
+	if v := os.Getenv("LOG_ADD_SOURCE"); v != "" {
+		b, err := parseBool(v)
+		if err != nil {
+			return lc, fmt.Errorf("invalid LOG_ADD_SOURCE: %w", err)
+		}
+		lc.AddSource = b
+	}
+
+	return lc, nil
 }
 
 // parseDeps parses "name1:type1,name2:type2,..." into a slice of Dependency.

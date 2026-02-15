@@ -16,6 +16,7 @@ import (
 	_ "github.com/BigKAA/topologymetrics/sdk-go/dephealth/checks"
 
 	"github.com/BigKAA/uniproxy/internal/config"
+	"github.com/BigKAA/uniproxy/internal/logging"
 	"github.com/BigKAA/uniproxy/internal/server"
 )
 
@@ -28,11 +29,7 @@ func main() {
 	}
 
 	// Set up logging.
-	level := slog.LevelInfo
-	if cfg.LogLevel == "debug" {
-		level = slog.LevelDebug
-	}
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
+	logger := logging.NewLogger(cfg.Log)
 	slog.SetDefault(logger)
 
 	slog.Info("config loaded",

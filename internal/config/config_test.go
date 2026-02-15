@@ -401,6 +401,142 @@ func TestLoad_FetchTimeout_Negative(t *testing.T) {
 	}
 }
 
+func TestLoad_LogConfig_Defaults(t *testing.T) {
+	setEnvs(t, map[string]string{
+		"DEPHEALTH_NAME": "app",
+	})
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Log.Format != "text" {
+		t.Errorf("Log.Format = %q, want %q", cfg.Log.Format, "text")
+	}
+	if cfg.Log.Level != "info" {
+		t.Errorf("Log.Level = %q, want %q", cfg.Log.Level, "info")
+	}
+	if cfg.Log.TimeFormat != "rfc3339nano" {
+		t.Errorf("Log.TimeFormat = %q, want %q", cfg.Log.TimeFormat, "rfc3339nano")
+	}
+	if cfg.Log.AddSource {
+		t.Error("Log.AddSource should be false by default")
+	}
+	if cfg.Log.TimeKey != "" || cfg.Log.LevelKey != "" || cfg.Log.MessageKey != "" || cfg.Log.SourceKey != "" {
+		t.Errorf("custom keys should be empty by default, got time=%q level=%q msg=%q source=%q",
+			cfg.Log.TimeKey, cfg.Log.LevelKey, cfg.Log.MessageKey, cfg.Log.SourceKey)
+	}
+}
+
+func TestLoad_LogConfig_AllVars(t *testing.T) {
+	setEnvs(t, map[string]string{
+		"DEPHEALTH_NAME":  "app",
+		"LOG_FORMAT":      "json",
+		"LOG_LEVEL":       "warn",
+		"LOG_TIME_FORMAT":  "unix",
+		"LOG_ADD_SOURCE":   "yes",
+		"LOG_TIME_KEY":     "@timestamp",
+		"LOG_LEVEL_KEY":    "severity",
+		"LOG_MESSAGE_KEY":  "message",
+		"LOG_SOURCE_KEY":   "caller",
+	})
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Log.Format != "json" {
+		t.Errorf("Log.Format = %q, want %q", cfg.Log.Format, "json")
+	}
+	if cfg.Log.Level != "warn" {
+		t.Errorf("Log.Level = %q, want %q", cfg.Log.Level, "warn")
+	}
+	if cfg.Log.TimeFormat != "unix" {
+		t.Errorf("Log.TimeFormat = %q, want %q", cfg.Log.TimeFormat, "unix")
+	}
+	if !cfg.Log.AddSource {
+		t.Error("Log.AddSource should be true")
+	}
+	if cfg.Log.TimeKey != "@timestamp" {
+		t.Errorf("Log.TimeKey = %q, want %q", cfg.Log.TimeKey, "@timestamp")
+	}
+	if cfg.Log.LevelKey != "severity" {
+		t.Errorf("Log.LevelKey = %q, want %q", cfg.Log.LevelKey, "severity")
+	}
+	if cfg.Log.MessageKey != "message" {
+		t.Errorf("Log.MessageKey = %q, want %q", cfg.Log.MessageKey, "message")
+	}
+	if cfg.Log.SourceKey != "caller" {
+		t.Errorf("Log.SourceKey = %q, want %q", cfg.Log.SourceKey, "caller")
+	}
+}
+
+func TestLoad_LogConfig_InvalidFormat(t *testing.T) {
+	setEnvs(t, map[string]string{
+		"DEPHEALTH_NAME": "app",
+		"LOG_FORMAT":     "xml",
+	})
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected error for invalid LOG_FORMAT")
+	}
+}
+
+func TestLoad_LogConfig_InvalidLevel(t *testing.T) {
+	setEnvs(t, map[string]string{
+		"DEPHEALTH_NAME": "app",
+		"LOG_LEVEL":      "trace",
+	})
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected error for invalid LOG_LEVEL")
+	}
+}
+
+func TestLoad_LogConfig_InvalidTimeFormat(t *testing.T) {
+	setEnvs(t, map[string]string{
+		"DEPHEALTH_NAME":  "app",
+		"LOG_TIME_FORMAT": "iso8601",
+	})
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected error for invalid LOG_TIME_FORMAT")
+	}
+}
+
+func TestLoad_LogConfig_InvalidAddSource(t *testing.T) {
+	setEnvs(t, map[string]string{
+		"DEPHEALTH_NAME": "app",
+		"LOG_ADD_SOURCE": "maybe",
+	})
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected error for invalid LOG_ADD_SOURCE")
+	}
+}
+
+func TestLoad_LogConfig_BackwardCompat(t *testing.T) {
+	setEnvs(t, map[string]string{
+		"DEPHEALTH_NAME": "app",
+		"LOG_LEVEL":      "debug",
+	})
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Log.Level != "debug" {
+		t.Errorf("Log.Level = %q, want %q", cfg.Log.Level, "debug")
+	}
+	if cfg.Log.Format != "text" {
+		t.Errorf("Log.Format = %q, want %q", cfg.Log.Format, "text")
+	}
+}
+
 func TestEnvName(t *testing.T) {
 	tests := []struct {
 		input string
