@@ -77,7 +77,14 @@ All configuration is done via environment variables.
 | `DEPHEALTH_NAME` | Yes | — | Application name (used in metrics and status response) |
 | `DEPHEALTH_DEPS` | No | — | Comma-separated dependency list: `name1:type1,name2:type2` |
 | `LISTEN_ADDR` | No | `:8080` | HTTP server listen address |
-| `LOG_LEVEL` | No | `info` | Log level (`info` or `debug`) |
+| `LOG_FORMAT` | No | `text` | Log output format: `text` or `json` |
+| `LOG_LEVEL` | No | `info` | Log level: `debug`, `info`, `warn`, `error` |
+| `LOG_TIME_FORMAT` | No | `rfc3339nano` | Timestamp format: `rfc3339`, `rfc3339nano`, `unix`, `unixmilli` |
+| `LOG_ADD_SOURCE` | No | `false` | Include source file:line in log output (`true`/`false`) |
+| `LOG_TIME_KEY` | No | `time` | JSON key for timestamp (only effective with `LOG_FORMAT=json`) |
+| `LOG_LEVEL_KEY` | No | `level` | JSON key for log level (only effective with `LOG_FORMAT=json`) |
+| `LOG_MESSAGE_KEY` | No | `msg` | JSON key for message (only effective with `LOG_FORMAT=json`) |
+| `LOG_SOURCE_KEY` | No | `source` | JSON key for source location (only effective with `LOG_FORMAT=json`) |
 | `DEPHEALTH_CHECK_INTERVAL` | No | `10` | Health check interval in seconds |
 | `DEPHEALTH_TIMEOUT` | No | SDK default | Global health check timeout in seconds |
 | `DEPHEALTH_FETCH_TIMEOUT` | No | `5` | Timeout for recursive HTTP detail fetch in seconds |
@@ -222,12 +229,20 @@ Always returns `200 OK` with body `ok`.
 
 ### `GET /metrics` — Prometheus Metrics
 
-Standard dephealth SDK metrics:
+dephealth SDK exports the following Prometheus metrics:
 
-- **`app_dependency_health`** (Gauge) — Health status: 1=UP, 0=DOWN
-- **`app_dependency_latency_seconds`** (Histogram) — Check latency
+| Metric | Type | Description |
+|--------|------|-------------|
+| `app_dependency_health` | Gauge | Health status: 1 = healthy, 0 = unhealthy |
+| `app_dependency_latency_seconds` | Histogram | Health check latency in seconds. Buckets: 1ms, 5ms, 10ms, 50ms, 100ms, 500ms, 1s, 5s |
+| `app_dependency_status` | Gauge | Category of the last check result (enum pattern — exactly one status value is set to 1, the rest to 0) |
+| `app_dependency_status_detail` | Gauge | Detailed reason of the last check result (state-set pattern — always 1 with detail label) |
 
-Labels: `name`, `namespace`, `dependency`, `type`, `host`, `port`, `critical`
+**Base labels** (all metrics): `name`, `dependency`, `type`, `host`, `port`, `critical`
+
+Additional labels per metric:
+- `app_dependency_status` adds label **`status`** with possible values: `ok`, `timeout`, `connection_error`, `dns_error`, `auth_error`, `tls_error`, `unhealthy`, `error`
+- `app_dependency_status_detail` adds label **`detail`** with a human-readable reason string
 
 ## Project Structure
 

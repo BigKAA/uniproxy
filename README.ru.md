@@ -77,7 +77,14 @@ helm install uniproxy-01 ./deploy/helm/uniproxy \
 | `DEPHEALTH_NAME` | Да | — | Имя приложения (используется в метриках и ответах) |
 | `DEPHEALTH_DEPS` | Нет | — | Список зависимостей через запятую: `имя1:тип1,имя2:тип2` |
 | `LISTEN_ADDR` | Нет | `:8080` | Адрес HTTP-сервера |
-| `LOG_LEVEL` | Нет | `info` | Уровень логирования (`info` или `debug`) |
+| `LOG_FORMAT` | Нет | `text` | Формат вывода логов: `text` или `json` |
+| `LOG_LEVEL` | Нет | `info` | Уровень логирования: `debug`, `info`, `warn`, `error` |
+| `LOG_TIME_FORMAT` | Нет | `rfc3339nano` | Формат времени: `rfc3339`, `rfc3339nano`, `unix`, `unixmilli` |
+| `LOG_ADD_SOURCE` | Нет | `false` | Включить файл:строку в вывод логов (`true`/`false`) |
+| `LOG_TIME_KEY` | Нет | `time` | JSON-ключ для метки времени (действует только при `LOG_FORMAT=json`) |
+| `LOG_LEVEL_KEY` | Нет | `level` | JSON-ключ для уровня лога (действует только при `LOG_FORMAT=json`) |
+| `LOG_MESSAGE_KEY` | Нет | `msg` | JSON-ключ для сообщения (действует только при `LOG_FORMAT=json`) |
+| `LOG_SOURCE_KEY` | Нет | `source` | JSON-ключ для расположения исходника (действует только при `LOG_FORMAT=json`) |
 | `DEPHEALTH_CHECK_INTERVAL` | Нет | `10` | Интервал проверки здоровья в секундах |
 | `DEPHEALTH_TIMEOUT` | Нет | SDK default | Глобальный таймаут проверки в секундах |
 | `DEPHEALTH_FETCH_TIMEOUT` | Нет | `5` | Таймаут рекурсивного HTTP detail fetch в секундах |
@@ -222,12 +229,20 @@ docker run -p 8080:8080 \
 
 ### `GET /metrics` — Метрики Prometheus
 
-Стандартные метрики dephealth SDK:
+dephealth SDK экспортирует следующие метрики Prometheus:
 
-- **`app_dependency_health`** (Gauge) — Статус здоровья: 1=UP, 0=DOWN
-- **`app_dependency_latency_seconds`** (Histogram) — Задержка проверки
+| Метрика | Тип | Описание |
+|---------|-----|----------|
+| `app_dependency_health` | Gauge | Статус здоровья: 1 = healthy, 0 = unhealthy |
+| `app_dependency_latency_seconds` | Histogram | Задержка проверки в секундах. Бакеты: 1ms, 5ms, 10ms, 50ms, 100ms, 500ms, 1s, 5s |
+| `app_dependency_status` | Gauge | Категория результата последней проверки (enum-паттерн — ровно одно значение status установлено в 1, остальные в 0) |
+| `app_dependency_status_detail` | Gauge | Детальная причина результата последней проверки (state-set паттерн — всегда 1 с меткой detail) |
 
-Метки: `name`, `namespace`, `dependency`, `type`, `host`, `port`, `critical`
+**Базовые метки** (все метрики): `name`, `dependency`, `type`, `host`, `port`, `critical`
+
+Дополнительные метки:
+- `app_dependency_status` добавляет метку **`status`** с возможными значениями: `ok`, `timeout`, `connection_error`, `dns_error`, `auth_error`, `tls_error`, `unhealthy`, `error`
+- `app_dependency_status_detail` добавляет метку **`detail`** с человекочитаемым описанием причины
 
 ## Структура проекта
 
