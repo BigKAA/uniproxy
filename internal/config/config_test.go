@@ -347,6 +347,60 @@ func TestLoad_MySQLOptions(t *testing.T) {
 	}
 }
 
+func TestLoad_FetchTimeout_Default(t *testing.T) {
+	setEnvs(t, map[string]string{
+		"DEPHEALTH_NAME": "app",
+	})
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.FetchTimeout != 5*time.Second {
+		t.Errorf("FetchTimeout = %v, want %v", cfg.FetchTimeout, 5*time.Second)
+	}
+}
+
+func TestLoad_FetchTimeout_Custom(t *testing.T) {
+	setEnvs(t, map[string]string{
+		"DEPHEALTH_NAME":          "app",
+		"DEPHEALTH_FETCH_TIMEOUT": "10.5",
+	})
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := time.Duration(10.5 * float64(time.Second))
+	if cfg.FetchTimeout != want {
+		t.Errorf("FetchTimeout = %v, want %v", cfg.FetchTimeout, want)
+	}
+}
+
+func TestLoad_FetchTimeout_Invalid(t *testing.T) {
+	setEnvs(t, map[string]string{
+		"DEPHEALTH_NAME":          "app",
+		"DEPHEALTH_FETCH_TIMEOUT": "abc",
+	})
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected error for invalid DEPHEALTH_FETCH_TIMEOUT")
+	}
+}
+
+func TestLoad_FetchTimeout_Negative(t *testing.T) {
+	setEnvs(t, map[string]string{
+		"DEPHEALTH_NAME":          "app",
+		"DEPHEALTH_FETCH_TIMEOUT": "-1",
+	})
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected error for negative DEPHEALTH_FETCH_TIMEOUT")
+	}
+}
+
 func TestEnvName(t *testing.T) {
 	tests := []struct {
 		input string

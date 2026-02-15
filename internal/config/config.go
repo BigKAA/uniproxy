@@ -16,6 +16,7 @@ type Config struct {
 	LogLevel      string
 	CheckInterval time.Duration
 	Timeout       time.Duration // global check timeout (0 = SDK default)
+	FetchTimeout  time.Duration // timeout for recursive HTTP fetch (default 5s)
 	Dependencies  []Dependency
 }
 
@@ -62,6 +63,7 @@ type Dependency struct {
 //   - LISTEN_ADDR (default ":8080")
 //   - LOG_LEVEL (default "info")
 //   - DEPHEALTH_CHECK_INTERVAL — seconds (default "10")
+//   - DEPHEALTH_FETCH_TIMEOUT — seconds, timeout for recursive HTTP detail fetch (default "5")
 //
 // Per-dependency (NAME is uppercase with hyphens replaced by underscores):
 //   - DEPHEALTH_<NAME>_URL or DEPHEALTH_<NAME>_HOST + DEPHEALTH_<NAME>_PORT
@@ -95,6 +97,17 @@ func Load() (*Config, error) {
 		}
 		cfg.Timeout = time.Duration(tSec * float64(time.Second))
 	}
+
+	// Fetch timeout for recursive HTTP detail requests (default 5s).
+	fetchStr := getEnv("DEPHEALTH_FETCH_TIMEOUT", "5")
+	fetchSec, err := strconv.ParseFloat(fetchStr, 64)
+	if err != nil {
+		return nil, fmt.Errorf("invalid DEPHEALTH_FETCH_TIMEOUT %q: %w", fetchStr, err)
+	}
+	if fetchSec < 0 {
+		return nil, fmt.Errorf("DEPHEALTH_FETCH_TIMEOUT must be non-negative, got %v", fetchSec)
+	}
+	cfg.FetchTimeout = time.Duration(fetchSec * float64(time.Second))
 
 	// Dependencies (optional — service may have none).
 	depsStr := os.Getenv("DEPHEALTH_DEPS")
