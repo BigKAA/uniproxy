@@ -1,520 +1,320 @@
 # uniproxy
 
 [![Go Version](https://img.shields.io/badge/go-1.25-00ADD8.svg)](https://golang.org/)
+[![dephealth SDK](https://img.shields.io/badge/dephealth_SDK-v0.4.1-blue.svg)](https://github.com/BigKAA/topologymetrics)
 [![License](https://img.shields.io/badge/license-Apache%202.0-green.svg)](./LICENSE)
 
 **Universal test proxy for dependency health monitoring with dephealth SDK**
 
-[Русская версия / Russian version](#русская-версия)
+[Русская версия (README.ru.md)](./README.ru.md)
 
 ## Overview
 
-**uniproxy** is a lightweight Go application that health-checks configured dependencies using the [dephealth SDK](https://github.com/BigKAA/topologymetrics) and exposes Prometheus metrics. It's designed as a universal test tool for validating dephealth-ui topology visualization in Kubernetes environments.
+**uniproxy** is a lightweight Go application that health-checks configured dependencies using the [dephealth SDK](https://github.com/BigKAA/topologymetrics) and exposes Prometheus metrics. It is designed as a universal test tool for validating dephealth-ui topology visualization in any environment — Docker, Kubernetes, or bare metal.
 
 ### Key Features
 
-- ✅ Universal dependency health checking (HTTP, gRPC, PostgreSQL, Redis, etc.)
-- ✅ Configuration via environment variables (12-factor app)
-- ✅ Prometheus metrics export via dephealth SDK
-- ✅ Multi-architecture Docker images (amd64, arm64)
-- ✅ Kubernetes-native with Helm chart
-- ✅ Instance-based deployment (multiple uniproxy instances with different configs)
+- Health checking for HTTP, gRPC, PostgreSQL, MySQL, Redis, AMQP, Kafka, and TCP dependencies
+- Enriched Status API with detailed dependency info and recursive HTTP chain visibility
+- Configuration via environment variables (12-factor app)
+- Prometheus metrics export via dephealth SDK
+- Kubernetes-native with Helm chart for instance-based deployment
+- Per-dependency configuration for check intervals, timeouts, TLS, and more
 
 ## Quick Start
-
-### Prerequisites
-
-- Go 1.25+
-- Docker (for containerized deployment)
-- Kubernetes cluster (for Helm deployment)
-
-### Local Development
-
-```bash
-# Clone repository
-git clone https://github.com/BigKAA/uniproxy.git
-cd uniproxy
-
-# Download dependencies
-go mod download
-
-# Run locally
-export UNIPROXY_NAME=test-proxy
-export UNIPROXY_NAMESPACE=default
-export UNIPROXY_LISTEN_ADDR=:8080
-export UNIPROXY_METRICS_ADDR=:9090
-export UNIPROXY_CHECK_INTERVAL=10s
-export UNIPROXY_DEPENDENCIES='[{"name":"postgres","type":"postgres","host":"localhost","port":5432,"critical":true}]'
-
-go run main.go
-```
 
 ### Docker
 
 ```bash
 # Build image
-docker build -t uniproxy:latest .
+docker build -t uniproxy:0.4.1 .
 
-# Run container
-docker run -p 8080:8080 -p 9090:9090 \
-  -e UNIPROXY_NAME=test-proxy \
-  -e UNIPROXY_NAMESPACE=default \
-  -e UNIPROXY_DEPENDENCIES='[{"name":"test-dep","type":"http","host":"httpbin.org","port":80}]' \
-  uniproxy:latest
+# Run with an HTTP dependency
+docker run -p 8080:8080 \
+  -e DEPHEALTH_NAME=my-proxy \
+  -e DEPHEALTH_DEPS="httpbin:http" \
+  -e DEPHEALTH_HTTPBIN_URL="http://httpbin.org" \
+  -e DEPHEALTH_HTTPBIN_CRITICAL=yes \
+  uniproxy:0.4.1
+```
+
+### Check Endpoints
+
+```bash
+# Simple health status
+curl http://localhost:8080/
+
+# Detailed status with dependency info
+curl "http://localhost:8080/?detail=true"
+
+# Detailed status with recursive HTTP fetch (depth=2)
+curl "http://localhost:8080/?detail=true&depth=2"
+
+# Liveness / readiness probes
+curl http://localhost:8080/healthz
+curl http://localhost:8080/readyz
+
+# Prometheus metrics
+curl http://localhost:8080/metrics | grep app_dependency
 ```
 
 ### Kubernetes (Helm)
 
 ```bash
-# Install with Helm
 helm install uniproxy-01 ./deploy/helm/uniproxy \
-  -f ./deploy/helm/uniproxy/instances/example.yaml \
-  -n uniproxy --create-namespace
+  -f ./deploy/helm/uniproxy/instances/ns1-homelab.yaml \
+  -n uniproxy-ns1 --create-namespace
 ```
 
 ## Configuration
 
-### Environment Variables
+All configuration is done via environment variables.
 
-| Variable | Required | Description | Example |
-|----------|:--------:|-------------|---------|
-| `UNIPROXY_NAME` | Yes | Service name (used in metrics) | `uniproxy-01` |
-| `UNIPROXY_NAMESPACE` | Yes | Kubernetes namespace or logical group | `production` |
-| `UNIPROXY_LISTEN_ADDR` | No | HTTP server listen address | `:8080` (default) |
-| `UNIPROXY_METRICS_ADDR` | No | Prometheus metrics address | `:9090` (default) |
-| `UNIPROXY_CHECK_INTERVAL` | No | Health check interval | `10s` (default) |
-| `UNIPROXY_DEPENDENCIES` | Yes | JSON array of dependency configs | See below |
-| `UNIPROXY_LOG_LEVEL` | No | Log level (info/debug) | `info` (default) |
+### Global Variables
 
-### Dependency Configuration
+| Variable | Required | Default | Description |
+|----------|:--------:|:-------:|-------------|
+| `DEPHEALTH_NAME` | Yes | — | Application name (used in metrics and status response) |
+| `DEPHEALTH_DEPS` | No | — | Comma-separated dependency list: `name1:type1,name2:type2` |
+| `LISTEN_ADDR` | No | `:8080` | HTTP server listen address |
+| `LOG_LEVEL` | No | `info` | Log level (`info` or `debug`) |
+| `DEPHEALTH_CHECK_INTERVAL` | No | `10` | Health check interval in seconds |
+| `DEPHEALTH_TIMEOUT` | No | SDK default | Global health check timeout in seconds |
+| `DEPHEALTH_FETCH_TIMEOUT` | No | `5` | Timeout for recursive HTTP detail fetch in seconds |
 
-`UNIPROXY_DEPENDENCIES` must be a JSON array of dependency objects:
+### Per-Dependency Variables
 
-```json
-[
-  {
-    "name": "postgres-main",
-    "type": "postgres",
-    "host": "pg-master.db.svc.cluster.local",
-    "port": 5432,
-    "critical": true,
-    "role": "primary",
-    "username": "user",
-    "password": "pass",
-    "database": "mydb"
-  },
-  {
-    "name": "redis-cache",
-    "type": "redis",
-    "host": "redis.cache.svc.cluster.local",
-    "port": 6379,
-    "critical": false
-  },
-  {
-    "name": "auth-service",
-    "type": "http",
-    "host": "auth.svc.cluster.local",
-    "port": 8080,
-    "critical": true,
-    "path": "/health"
-  }
-]
+For each dependency listed in `DEPHEALTH_DEPS`, configure it using environment variables with the prefix `DEPHEALTH_<NAME>_`, where `<NAME>` is the dependency name converted to uppercase with hyphens replaced by underscores (e.g., `my-backend` becomes `MY_BACKEND`).
+
+| Variable | Required | Description |
+|----------|:--------:|-------------|
+| `DEPHEALTH_<NAME>_URL` | Yes* | Connection URL |
+| `DEPHEALTH_<NAME>_HOST` | Yes* | Target host (alternative to URL) |
+| `DEPHEALTH_<NAME>_PORT` | Yes* | Target port (required with HOST) |
+| `DEPHEALTH_<NAME>_CRITICAL` | Yes | Critical dependency flag (`yes`/`no`) |
+| `DEPHEALTH_<NAME>_CHECK_INTERVAL` | No | Per-dependency check interval (seconds) |
+| `DEPHEALTH_<NAME>_TIMEOUT` | No | Per-dependency timeout (seconds) |
+| `DEPHEALTH_<NAME>_HEALTH_PATH` | No | HTTP health check path |
+| `DEPHEALTH_<NAME>_TLS` | No | Enable TLS (`yes`/`no`, HTTP/gRPC) |
+| `DEPHEALTH_<NAME>_TLS_SKIP_VERIFY` | No | Skip TLS verification (`yes`/`no`) |
+| `DEPHEALTH_<NAME>_GRPC_SERVICE_NAME` | No | gRPC service name for health check |
+| `DEPHEALTH_<NAME>_POSTGRES_QUERY` | No | Custom PostgreSQL health check query |
+| `DEPHEALTH_<NAME>_MYSQL_QUERY` | No | Custom MySQL health check query |
+| `DEPHEALTH_<NAME>_REDIS_PASSWORD` | No | Redis authentication password |
+| `DEPHEALTH_<NAME>_REDIS_DB` | No | Redis database number |
+| `DEPHEALTH_<NAME>_AMQP_URL` | No | AMQP connection URL |
+
+*Either `URL` or `HOST` + `PORT` is required.
+
+### Supported Dependency Types
+
+`http`, `grpc`, `tcp`, `postgres`, `mysql`, `redis`, `amqp`, `kafka`
+
+### Configuration Example
+
+```bash
+docker run -p 8080:8080 \
+  -e DEPHEALTH_NAME=frontend \
+  -e DEPHEALTH_CHECK_INTERVAL=15 \
+  -e DEPHEALTH_FETCH_TIMEOUT=3 \
+  -e DEPHEALTH_DEPS="backend:http,cache:redis,db:postgres" \
+  -e DEPHEALTH_BACKEND_URL="http://backend.svc:8080" \
+  -e DEPHEALTH_BACKEND_CRITICAL=yes \
+  -e DEPHEALTH_BACKEND_HEALTH_PATH="/" \
+  -e DEPHEALTH_CACHE_HOST=redis.svc \
+  -e DEPHEALTH_CACHE_PORT=6379 \
+  -e DEPHEALTH_CACHE_CRITICAL=no \
+  -e DEPHEALTH_DB_URL="postgres://user:pass@pg.svc:5432/mydb" \
+  -e DEPHEALTH_DB_CRITICAL=yes \
+  uniproxy:0.4.1
 ```
 
-**Supported Dependency Types:**
-- `http` / `https`
-- `grpc`
-- `tcp`
-- `postgres`
-- `mysql`
-- `redis`
-- `mongodb`
-- `amqp`
-- `kafka`
+## API Endpoints
 
-## Exposed Metrics
+### `GET /` — Simple Status
 
-uniproxy exposes standard dephealth SDK metrics on `:9090/metrics`:
+Returns basic health status for backward compatibility.
 
-### `app_dependency_health` (Gauge)
-Health status (1=UP, 0=DOWN) for each dependency endpoint.
+```json
+{
+  "name": "frontend",
+  "podName": "frontend-7b9f4-xk2lm",
+  "namespace": "production",
+  "health": {
+    "backend:backend.svc:8080": true,
+    "cache:redis.svc:6379": true,
+    "db:pg.svc:5432": false
+  }
+}
+```
 
-**Labels:**
-- `name` — service name (from `UNIPROXY_NAME`)
-- `namespace` — namespace (from `UNIPROXY_NAMESPACE`)
-- `dependency` — dependency name
-- `type` — connection type
-- `host` — target host
-- `port` — target port
-- `critical` — criticality flag (yes/no)
+### `GET /?detail=true` — Enriched Status
 
-### `app_dependency_latency_seconds` (Histogram)
-Health check latency in seconds with buckets: `0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0, 5.0`
+Returns detailed dependency information from the SDK's `HealthDetails()` API.
+
+**Query parameters:**
+
+| Parameter | Default | Description |
+|-----------|:-------:|-------------|
+| `detail` | — | Set to `true` to enable enriched response |
+| `depth` | `1` | Recursion depth for HTTP dependency fetch (0–10) |
+
+```json
+{
+  "name": "frontend",
+  "podName": "frontend-7b9f4-xk2lm",
+  "namespace": "production",
+  "dependencies": {
+    "backend:backend.svc:8080": {
+      "healthy": true,
+      "status": "ok",
+      "detail": "200_ok",
+      "latency_ms": 12.5,
+      "type": "http",
+      "name": "backend",
+      "host": "backend.svc",
+      "port": "8080",
+      "critical": true,
+      "last_checked_at": "2026-02-15T10:30:45Z",
+      "labels": {},
+      "response": {
+        "name": "backend",
+        "podName": "backend-5c8d2-m9n3p",
+        "namespace": "production",
+        "dependencies": {}
+      }
+    },
+    "db:pg.svc:5432": {
+      "healthy": false,
+      "status": "connection_error",
+      "detail": "connection_refused",
+      "latency_ms": 1230.5,
+      "type": "postgres",
+      "name": "db",
+      "host": "pg.svc",
+      "port": "5432",
+      "critical": true,
+      "last_checked_at": "2026-02-15T10:30:44Z",
+      "labels": {}
+    }
+  }
+}
+```
+
+**How recursive fetch works:**
+
+- For HTTP-type dependencies with `depth > 0`, uniproxy makes an HTTP request to the dependency at `http://<host>:<port>/?detail=true&depth=N-1`
+- The response is included in the `response` field of the dependency
+- Non-HTTP dependencies never have a `response` field
+- If the downstream is unreachable, `response` is omitted
+- `depth=0` disables recursive fetch entirely
+- `DEPHEALTH_FETCH_TIMEOUT` controls the timeout for all parallel fetches
+
+**Status categories:** `ok`, `timeout`, `connection_error`, `dns_error`, `auth_error`, `tls_error`, `unhealthy`, `error`, `unknown`
+
+### `GET /healthz` — Liveness Probe
+
+Always returns `200 OK` with body `ok`.
+
+### `GET /readyz` — Readiness Probe
+
+Always returns `200 OK` with body `ok`.
+
+### `GET /metrics` — Prometheus Metrics
+
+Standard dephealth SDK metrics:
+
+- **`app_dependency_health`** (Gauge) — Health status: 1=UP, 0=DOWN
+- **`app_dependency_latency_seconds`** (Histogram) — Check latency
+
+Labels: `name`, `namespace`, `dependency`, `type`, `host`, `port`, `critical`
 
 ## Project Structure
 
 ```
 uniproxy/
-├── main.go                    # Application entry point
+├── main.go                      # Entry point, SDK initialization
 ├── internal/
-│   ├── config/               # Environment configuration
-│   └── server/               # HTTP server
+│   ├── config/
+│   │   ├── config.go            # Env var parsing
+│   │   └── config_test.go       # Config tests
+│   └── server/
+│       ├── server.go            # HTTP handlers, types
+│       ├── server_test.go       # Server tests (20 tests)
+│       ├── fetch.go             # Recursive HTTP fetch
+│       └── fetch_test.go        # Fetch tests
 ├── deploy/
 │   └── helm/
-│       └── uniproxy/         # Helm chart
-│           ├── templates/    # K8s manifests
-│           ├── instances/    # Instance configurations
-│           └── values.yaml   # Default values
-├── Dockerfile                # Multi-arch Docker build
-├── go.mod                    # Go dependencies
-├── README.md                 # This file
-├── AGENTS.md                 # AI agent guidelines
-└── GIT-WORKFLOW.md           # Git workflow documentation
+│       └── uniproxy/
+│           ├── Chart.yaml       # Chart metadata (v0.4.1)
+│           ├── values.yaml      # Default values
+│           ├── templates/       # K8s manifest templates
+│           └── instances/       # Instance configurations
+├── plans/                       # Development plans
+├── Dockerfile                   # Multi-stage Docker build
+├── go.mod
+├── LICENSE
+└── NOTICE
 ```
 
-## Deployment
+## Helm Deployment
 
-### Helm Chart
+The Helm chart supports instance-based deployment — multiple uniproxy instances with different dependency configurations in the same namespace.
 
-The Helm chart supports instance-based deployment, allowing multiple uniproxy instances with different dependency configurations in the same namespace.
-
-**Example:**
 ```bash
-# Deploy instance 1 (checks postgres + redis)
+# Install
 helm install uniproxy-01 ./deploy/helm/uniproxy \
-  -f ./deploy/helm/uniproxy/instances/ns1-example.yaml \
+  -f ./deploy/helm/uniproxy/instances/ns1-homelab.yaml \
   -n uniproxy-ns1 --create-namespace
 
-# Deploy instance 2 (checks different services)
-helm install uniproxy-02 ./deploy/helm/uniproxy \
-  -f ./deploy/helm/uniproxy/instances/ns2-example.yaml \
-  -n uniproxy-ns2 --create-namespace
+# Upgrade
+helm upgrade uniproxy-01 ./deploy/helm/uniproxy \
+  -f ./deploy/helm/uniproxy/instances/ns1-homelab.yaml \
+  -n uniproxy-ns1
+
+# Debug template rendering
+helm template uniproxy-01 ./deploy/helm/uniproxy \
+  -f ./deploy/helm/uniproxy/instances/ns1-homelab.yaml
 ```
 
-See [deploy/helm/uniproxy/README.md](./deploy/helm/uniproxy/README.md) for details.
+### Helm Values
 
-## Development
+| Value | Default | Description |
+|-------|:-------:|-------------|
+| `global.pushRegistry` | `""` | Container registry prefix |
+| `image.name` | `uniproxy` | Image name |
+| `image.tag` | `latest` | Image tag |
+| `checkInterval` | `"10"` | Health check interval (seconds) |
+| `timeout` | `""` | Global check timeout (seconds) |
+| `fetchTimeout` | `"5"` | Recursive HTTP fetch timeout (seconds) |
 
-### Build
+## Testing
 
 ```bash
-# Build binary
-go build -o uniproxy main.go
-
-# Run tests
+# Run all tests
 go test ./...
 
-# Build Docker image
-docker build -t uniproxy:dev .
-```
+# With coverage
+go test -cover ./...
 
-### Testing
-
-Create a test configuration:
-
-```bash
-export UNIPROXY_NAME=test
-export UNIPROXY_NAMESPACE=default
-export UNIPROXY_DEPENDENCIES='[
-  {"name":"httpbin","type":"http","host":"httpbin.org","port":80,"path":"/status/200"},
-  {"name":"google","type":"http","host":"www.google.com","port":443,"path":"/"}
-]'
-
-go run main.go
-```
-
-Check metrics:
-```bash
-curl http://localhost:9090/metrics | grep app_dependency
+# Specific package
+go test -v ./internal/server
 ```
 
 ## Integration with dephealth-ui
 
 uniproxy is designed to work with [dephealth-ui](https://github.com/BigKAA/dephealth-ui) for topology visualization.
 
-**Workflow:**
 1. Deploy uniproxy instances in your Kubernetes cluster
 2. Configure Prometheus to scrape uniproxy pods
 3. Point dephealth-ui to your Prometheus instance
-4. View real-time topology in dephealth-ui web interface
-
-## Contributing
-
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes using [Conventional Commits](https://www.conventionalcommits.org/)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
-See [GIT-WORKFLOW.md](./GIT-WORKFLOW.md) for detailed workflow.
+4. Use `?detail=true&depth=N` for deep dependency chain inspection
 
 ## License
 
-Apache License 2.0 - see [LICENSE](./LICENSE) for details.
+Apache License 2.0 — see [LICENSE](./LICENSE) for details.
 
 ## Related Projects
 
+- [dephealth SDK](https://github.com/BigKAA/topologymetrics) — Health checking and metrics library
 - [dephealth-ui](https://github.com/BigKAA/dephealth-ui) — Web UI for topology visualization
-- [dephealth SDK](https://github.com/BigKAA/topologymetrics) — Instrumentation library
-
----
-
-**Built with ❤️ for microservices observability testing**
-
----
-
-# Русская версия
-
-**Универсальный тестовый прокси для мониторинга здоровья зависимостей с dephealth SDK**
-
-[English version / Английская версия](#uniproxy)
-
-## Обзор
-
-**uniproxy** — легковесное Go-приложение, которое проверяет здоровье настроенных зависимостей с помощью [dephealth SDK](https://github.com/BigKAA/topologymetrics) и экспортирует метрики Prometheus. Предназначено как универсальный тестовый инструмент для валидации визуализации топологии dephealth-ui в среде Kubernetes.
-
-### Ключевые возможности
-
-- Универсальная проверка здоровья зависимостей (HTTP, gRPC, PostgreSQL, Redis и др.)
-- Конфигурация через переменные окружения (12-factor app)
-- Экспорт метрик Prometheus через dephealth SDK
-- Мультиархитектурные Docker-образы (amd64, arm64)
-- Kubernetes-native с Helm chart
-- Инстанс-ориентированное развертывание (несколько экземпляров uniproxy с разными конфигурациями)
-
-## Быстрый старт
-
-### Требования
-
-- Go 1.25+
-- Docker (для контейнерного развертывания)
-- Kubernetes кластер (для Helm-развертывания)
-
-### Локальная разработка
-
-```bash
-# Клонирование репозитория
-git clone https://github.com/BigKAA/uniproxy.git
-cd uniproxy
-
-# Загрузка зависимостей
-go mod download
-
-# Локальный запуск
-export UNIPROXY_NAME=test-proxy
-export UNIPROXY_NAMESPACE=default
-export UNIPROXY_LISTEN_ADDR=:8080
-export UNIPROXY_METRICS_ADDR=:9090
-export UNIPROXY_CHECK_INTERVAL=10s
-export UNIPROXY_DEPENDENCIES='[{"name":"postgres","type":"postgres","host":"localhost","port":5432,"critical":true}]'
-
-go run main.go
-```
-
-### Docker
-
-```bash
-# Сборка образа
-docker build -t uniproxy:latest .
-
-# Запуск контейнера
-docker run -p 8080:8080 -p 9090:9090 \
-  -e UNIPROXY_NAME=test-proxy \
-  -e UNIPROXY_NAMESPACE=default \
-  -e UNIPROXY_DEPENDENCIES='[{"name":"test-dep","type":"http","host":"httpbin.org","port":80}]' \
-  uniproxy:latest
-```
-
-### Kubernetes (Helm)
-
-```bash
-# Установка через Helm
-helm install uniproxy-01 ./deploy/helm/uniproxy \
-  -f ./deploy/helm/uniproxy/instances/example.yaml \
-  -n uniproxy --create-namespace
-```
-
-## Конфигурация
-
-### Переменные окружения
-
-| Переменная | Обязательная | Описание | Пример |
-|------------|:------------:|----------|--------|
-| `UNIPROXY_NAME` | Да | Имя сервиса (используется в метриках) | `uniproxy-01` |
-| `UNIPROXY_NAMESPACE` | Да | Namespace Kubernetes или логическая группа | `production` |
-| `UNIPROXY_LISTEN_ADDR` | Нет | Адрес HTTP-сервера | `:8080` (по умолчанию) |
-| `UNIPROXY_METRICS_ADDR` | Нет | Адрес метрик Prometheus | `:9090` (по умолчанию) |
-| `UNIPROXY_CHECK_INTERVAL` | Нет | Интервал проверки здоровья | `10s` (по умолчанию) |
-| `UNIPROXY_DEPENDENCIES` | Да | JSON-массив конфигураций зависимостей | См. ниже |
-| `UNIPROXY_LOG_LEVEL` | Нет | Уровень логирования (info/debug) | `info` (по умолчанию) |
-
-### Конфигурация зависимостей
-
-`UNIPROXY_DEPENDENCIES` должен быть JSON-массивом объектов зависимостей:
-
-```json
-[
-  {
-    "name": "postgres-main",
-    "type": "postgres",
-    "host": "pg-master.db.svc.cluster.local",
-    "port": 5432,
-    "critical": true,
-    "role": "primary",
-    "username": "user",
-    "password": "pass",
-    "database": "mydb"
-  },
-  {
-    "name": "redis-cache",
-    "type": "redis",
-    "host": "redis.cache.svc.cluster.local",
-    "port": 6379,
-    "critical": false
-  },
-  {
-    "name": "auth-service",
-    "type": "http",
-    "host": "auth.svc.cluster.local",
-    "port": 8080,
-    "critical": true,
-    "path": "/health"
-  }
-]
-```
-
-**Поддерживаемые типы зависимостей:**
-- `http` / `https`
-- `grpc`
-- `tcp`
-- `postgres`
-- `mysql`
-- `redis`
-- `mongodb`
-- `amqp`
-- `kafka`
-
-## Экспортируемые метрики
-
-uniproxy экспортирует стандартные метрики dephealth SDK на `:9090/metrics`:
-
-### `app_dependency_health` (Gauge)
-Статус здоровья (1=UP, 0=DOWN) для каждой зависимости.
-
-**Метки:**
-- `name` — имя сервиса (из `UNIPROXY_NAME`)
-- `namespace` — namespace (из `UNIPROXY_NAMESPACE`)
-- `dependency` — имя зависимости
-- `type` — тип соединения
-- `host` — целевой хост
-- `port` — целевой порт
-- `critical` — флаг критичности (yes/no)
-
-### `app_dependency_latency_seconds` (Histogram)
-Задержка проверки здоровья в секундах с бакетами: `0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0, 5.0`
-
-## Структура проекта
-
-```
-uniproxy/
-├── main.go                    # Точка входа приложения
-├── internal/
-│   ├── config/               # Конфигурация из окружения
-│   └── server/               # HTTP-сервер
-├── deploy/
-│   └── helm/
-│       └── uniproxy/         # Helm chart
-│           ├── templates/    # Манифесты K8s
-│           ├── instances/    # Конфигурации экземпляров
-│           └── values.yaml   # Значения по умолчанию
-├── Dockerfile                # Мультиархитектурная сборка Docker
-├── go.mod                    # Зависимости Go
-├── README.md                 # Этот файл
-├── AGENTS.md                 # Руководство для AI-агентов
-└── GIT-WORKFLOW.md           # Документация Git-процесса
-```
-
-## Развертывание
-
-### Helm Chart
-
-Helm chart поддерживает инстанс-ориентированное развертывание, позволяя запускать несколько экземпляров uniproxy с разными конфигурациями зависимостей в одном namespace.
-
-**Пример:**
-```bash
-# Развертывание экземпляра 1 (проверяет postgres + redis)
-helm install uniproxy-01 ./deploy/helm/uniproxy \
-  -f ./deploy/helm/uniproxy/instances/ns1-example.yaml \
-  -n uniproxy-ns1 --create-namespace
-
-# Развертывание экземпляра 2 (проверяет другие сервисы)
-helm install uniproxy-02 ./deploy/helm/uniproxy \
-  -f ./deploy/helm/uniproxy/instances/ns2-example.yaml \
-  -n uniproxy-ns2 --create-namespace
-```
-
-Подробности: [deploy/helm/uniproxy/README.md](./deploy/helm/uniproxy/README.md).
-
-## Разработка
-
-### Сборка
-
-```bash
-# Сборка бинарника
-go build -o uniproxy main.go
-
-# Запуск тестов
-go test ./...
-
-# Сборка Docker-образа
-docker build -t uniproxy:dev .
-```
-
-### Тестирование
-
-Создайте тестовую конфигурацию:
-
-```bash
-export UNIPROXY_NAME=test
-export UNIPROXY_NAMESPACE=default
-export UNIPROXY_DEPENDENCIES='[
-  {"name":"httpbin","type":"http","host":"httpbin.org","port":80,"path":"/status/200"},
-  {"name":"google","type":"http","host":"www.google.com","port":443,"path":"/"}
-]'
-
-go run main.go
-```
-
-Проверка метрик:
-```bash
-curl http://localhost:9090/metrics | grep app_dependency
-```
-
-## Интеграция с dephealth-ui
-
-uniproxy предназначен для работы с [dephealth-ui](https://github.com/BigKAA/dephealth-ui) для визуализации топологии.
-
-**Порядок работы:**
-1. Разверните экземпляры uniproxy в вашем Kubernetes-кластере
-2. Настройте Prometheus для сбора метрик с подов uniproxy
-3. Укажите dephealth-ui на ваш экземпляр Prometheus
-4. Просматривайте топологию в реальном времени через веб-интерфейс dephealth-ui
-
-## Участие в разработке
-
-1. Форкните репозиторий
-2. Создайте feature-ветку (`git checkout -b feature/amazing-feature`)
-3. Зафиксируйте изменения с помощью [Conventional Commits](https://www.conventionalcommits.org/)
-4. Отправьте ветку (`git push origin feature/amazing-feature`)
-5. Откройте Pull Request
-
-Подробный процесс: [GIT-WORKFLOW.md](./GIT-WORKFLOW.md).
-
-## Лицензия
-
-Apache License 2.0 — подробности в [LICENSE](./LICENSE).
-
-## Связанные проекты
-
-- [dephealth-ui](https://github.com/BigKAA/dephealth-ui) — Веб-интерфейс для визуализации топологии
-- [dephealth SDK](https://github.com/BigKAA/topologymetrics) — Библиотека инструментирования
