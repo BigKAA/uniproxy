@@ -44,11 +44,11 @@ You have a chain of services and need to quickly understand which dependency is 
                    curl
                     │
                     ▼
-┌──────────┐   ┌──────────┐   ┌──────────┐   ┌─────────┐
+┌──────────┐   ┌──────────┐   ┌───────────┐   ┌─────────┐
 │ frontend │──▶│ backend  │──▶│ auth-svc  │──▶│ user-db │
 │ :8080    │   │ :8080    │   │ :8080     │   │ :5432   │
 │ uniproxy │   │ uniproxy │   │ uniproxy  │   │ postgres│
-└──────────┘   └──────────┘   └──────────┘   └─────────┘
+└──────────┘   └──────────┘   └───────────┘   └─────────┘
                     │                              ▲
                     └──────────────────────────────┘
                               redis :6379
@@ -149,13 +149,13 @@ You have a microservice application in Kubernetes and want to validate that all 
 Namespace: production
 ┌─────────────────────────────────────────────────────┐
 │                                                     │
-│  ┌──────────┐   ┌──────────┐   ┌──────────┐        │
-│  │ gateway  │──▶│ order-svc│──▶│ payment  │        │
-│  │ uniproxy │   │ uniproxy │   │ uniproxy │        │
-│  │ :8080    │   │ :8080    │   │ :8080    │        │
-│  └──────────┘   └──────────┘   └──────────┘        │
-│       │              │              │                │
-│       │              ▼              ▼                │
+│  ┌──────────┐   ┌──────────┐   ┌──────────┐         │
+│  │ gateway  │──▶│ order-svc│──▶│ payment  │         │
+│  │ uniproxy │   │ uniproxy │   │ uniproxy │         │
+│  │ :8080    │   │ :8080    │   │ :8080    │         │
+│  └──────────┘   └──────────┘   └──────────┘         │
+│       │              │              │               │
+│       │              ▼              ▼               │
 │       │         ┌──────────┐  ┌──────────┐          │
 │       │         │ postgres │  │  stripe  │ (ext)    │
 │       │         │  :5432   │  │ api.com  │          │
@@ -315,7 +315,7 @@ You have traditional infrastructure (no containers, no Kubernetes) and need to m
 │  192.168.1.10   │────▶│  192.168.1.20   │────▶│  192.168.1.30   │
 │  uniproxy:8080  │     │  uniproxy:8080  │     │  PostgreSQL:5432│
 └─────────────────┘     └─────────────────┘     │  Redis:6379     │
-                              │                  └─────────────────┘
+                              │                 └─────────────────┘
                               ▼
                         ┌─────────────────┐
                         │  mq-server-01   │
