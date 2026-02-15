@@ -301,6 +301,17 @@ go test -cover ./...
 go test -v ./internal/server
 ```
 
+## Use Cases
+
+See [Use Cases and Examples](./docs/use-cases.md) for detailed scenarios including:
+
+- Recursive chain diagnostics without Prometheus (single `curl` → full dependency tree)
+- Kubernetes microservice chains, Docker Compose, bare metal / VM deployments
+- Mixed environments (K8s + VMs) with cross-boundary visibility
+- Sidecar for legacy applications without SDK integration
+- Network policy / firewall testing, CI/CD health gates
+- Multi-cluster monitoring, DB migration readiness, disaster recovery verification
+
 ## Integration with dephealth-ui
 
 uniproxy is designed to work with [dephealth-ui](https://github.com/BigKAA/dephealth-ui) for topology visualization.
