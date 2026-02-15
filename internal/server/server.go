@@ -2,11 +2,13 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
 	"os"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -128,8 +130,28 @@ func (s *Server) handleDetail(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Recursive HTTP fetch will be added in Phase 3.
-	_ = depth
+	// Parallel HTTP fetch for HTTP-type dependencies when depth > 0.
+	if depth > 0 {
+		ctx, cancel := context.WithTimeout(r.Context(), s.fetchTimeout)
+		defer cancel()
+
+		var wg sync.WaitGroup
+		var mu sync.Mutex
+		for key, dep := range deps {
+			if dep.Type != dephealth.TypeHTTP {
+				continue
+			}
+			wg.Add(1)
+			go func(k string, d *DependencyDetail) {
+				defer wg.Done()
+				result := fetchHTTPResponse(ctx, d.Host, d.Port, depth, s.fetchTimeout)
+				mu.Lock()
+				deps[k].Response = result
+				mu.Unlock()
+			}(key, dep)
+		}
+		wg.Wait()
+	}
 
 	resp := DetailStatusResponse{
 		Name:         s.name,
