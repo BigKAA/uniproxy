@@ -1,7 +1,7 @@
 # uniproxy
 
 [![Go Version](https://img.shields.io/badge/go-1.25-00ADD8.svg)](https://golang.org/)
-[![dephealth SDK](https://img.shields.io/badge/dephealth_SDK-v0.4.1-blue.svg)](https://github.com/BigKAA/topologymetrics)
+[![dephealth SDK](https://img.shields.io/badge/dephealth_SDK-v0.4.2-blue.svg)](https://github.com/BigKAA/topologymetrics)
 [![License](https://img.shields.io/badge/license-Apache%202.0-green.svg)](./LICENSE)
 
 **Универсальный тестовый прокси для мониторинга здоровья зависимостей с dephealth SDK**
@@ -20,6 +20,8 @@
 - Экспорт метрик Prometheus через dephealth SDK
 - Kubernetes-native с Helm chart для инстанс-ориентированного развёртывания
 - Per-dependency настройка интервалов, таймаутов, TLS и др.
+- Аутентификация: Bearer token, Basic Auth, пользовательские HTTP-заголовки и gRPC metadata
+- Безопасное управление секретами через суффикс `_FILE` (Kubernetes Secrets / Docker Secrets)
 
 ## Быстрый старт
 
@@ -112,6 +114,87 @@ helm install uniproxy-01 ./deploy/helm/uniproxy \
 | `DEPHEALTH_<ИМЯ>_AMQP_URL` | Нет | URL подключения AMQP |
 
 *Требуется либо `URL`, либо `HOST` + `PORT`.
+
+### Аутентификация
+
+uniproxy поддерживает аутентификацию для HTTP и gRPC зависимостей. Auth можно настроить глобально или для каждой зависимости; per-dependency настройки полностью переопределяют глобальные.
+
+#### Методы аутентификации
+
+| Метод | HTTP | gRPC | Описание |
+|-------|:----:|:----:|----------|
+| Bearer Token | Да | Да | Заголовок `Authorization: Bearer <token>` / gRPC call credential |
+| Basic Auth | Да | Да | Заголовок `Authorization: Basic <base64>` / gRPC call credential |
+| Custom Headers | Да | — | Произвольные HTTP-заголовки (например, API-ключи) |
+| Custom Metadata | — | Да | Произвольные пары ключ-значение gRPC metadata |
+
+Допускается только **один метод аутентификации** на зависимость. Одновременная установка bearer token и basic auth — ошибка.
+
+#### Глобальные переменные аутентификации
+
+Применяются ко всем зависимостям, для которых не настроена per-dependency аутентификация.
+
+| Переменная | Описание |
+|------------|----------|
+| `DEPHEALTH_BEARER_TOKEN` | Глобальный bearer token |
+| `DEPHEALTH_BEARER_TOKEN_FILE` | Чтение bearer token из файла (взаимоисключающее с предыдущей) |
+| `DEPHEALTH_BASIC_USER` | Глобальный логин Basic Auth |
+| `DEPHEALTH_BASIC_PASS` | Глобальный пароль Basic Auth |
+| `DEPHEALTH_BASIC_PASS_FILE` | Чтение пароля из файла (взаимоисключающее с предыдущей) |
+| `DEPHEALTH_HEADERS` | Глобальные HTTP-заголовки (JSON: `{"Key":"Value"}`) |
+| `DEPHEALTH_METADATA` | Глобальные gRPC metadata (JSON: `{"key":"value"}`) |
+
+Глобальные headers применяются только к HTTP-зависимостям; глобальные metadata — только к gRPC.
+
+#### Per-dependency переменные аутентификации
+
+| Переменная | Описание |
+|------------|----------|
+| `DEPHEALTH_<ИМЯ>_BEARER_TOKEN` | Bearer token для этой зависимости |
+| `DEPHEALTH_<ИМЯ>_BEARER_TOKEN_FILE` | Чтение bearer token из файла |
+| `DEPHEALTH_<ИМЯ>_BASIC_USER` | Логин Basic Auth |
+| `DEPHEALTH_<ИМЯ>_BASIC_PASS` | Пароль Basic Auth |
+| `DEPHEALTH_<ИМЯ>_BASIC_PASS_FILE` | Чтение пароля из файла |
+| `DEPHEALTH_<ИМЯ>_HEADERS` | HTTP-заголовки (JSON-строка) |
+| `DEPHEALTH_<ИМЯ>_METADATA` | gRPC metadata (JSON-строка) |
+
+#### Паттерн суффикса `_FILE`
+
+Для любой секретной переменной (`BEARER_TOKEN`, `BASIC_PASS`) можно добавить суффикс `_FILE`, чтобы прочитать значение из файла вместо переменной окружения. Рекомендуемый подход для Kubernetes Secrets и Docker Secrets:
+
+```bash
+# Монтирование K8s Secret как файл
+-e DEPHEALTH_API_BEARER_TOKEN_FILE=/run/secrets/api-token
+```
+
+Правила:
+- Одновременная установка `VAR` и `VAR_FILE` — ошибка
+- Содержимое файла очищается от пробелов в начале и конце
+- Файл должен существовать и быть доступен для чтения
+
+#### Правила валидации
+
+1. **Один метод на зависимость**: bearer token, basic auth, headers или metadata — выберите один
+2. **Полный basic auth**: `BASIC_USER` и `BASIC_PASS` должны быть заданы вместе
+3. **Проверка типа**: `HEADERS` только для HTTP; `METADATA` только для gRPC
+4. **Без VAR + VAR_FILE**: нельзя задавать одновременно инлайн-значение и ссылку на файл
+
+#### Пример аутентификации
+
+```bash
+docker run -p 8080:8080 \
+  -e DEPHEALTH_NAME=auth-proxy \
+  -e DEPHEALTH_DEPS="secure-api:http,grpc-svc:grpc" \
+  -e DEPHEALTH_SECURE_API_URL="https://api.example.com" \
+  -e DEPHEALTH_SECURE_API_CRITICAL=yes \
+  -e DEPHEALTH_SECURE_API_BEARER_TOKEN="eyJhbGciOi..." \
+  -e DEPHEALTH_GRPC_SVC_HOST=grpc.example.com \
+  -e DEPHEALTH_GRPC_SVC_PORT=443 \
+  -e DEPHEALTH_GRPC_SVC_CRITICAL=yes \
+  -e DEPHEALTH_GRPC_SVC_BASIC_USER=admin \
+  -e DEPHEALTH_GRPC_SVC_BASIC_PASS=secret \
+  uniproxy:0.4.2
+```
 
 ### Поддерживаемые типы зависимостей
 
@@ -326,6 +409,7 @@ go test -v ./internal/server
 - Sidecar для legacy-приложений без интеграции SDK
 - Тестирование сетевых политик / файрволов, health gate в CI/CD
 - Мониторинг между кластерами, готовность к миграции БД, верификация DR
+- Аутентификация: bearer token, K8s Secrets, пользовательские API-ключи
 
 ## Интеграция с dephealth-ui
 

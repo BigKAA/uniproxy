@@ -2,6 +2,8 @@ package config
 
 import (
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -534,6 +536,714 @@ func TestLoad_LogConfig_BackwardCompat(t *testing.T) {
 	}
 	if cfg.Log.Format != "text" {
 		t.Errorf("Log.Format = %q, want %q", cfg.Log.Format, "text")
+	}
+}
+
+// --- resolveSecret / readSecretFile tests ---
+
+func TestReadSecretFile_Valid(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "token.txt")
+	os.WriteFile(path, []byte("  my-secret-token\n"), 0644)
+
+	val, err := readSecretFile(path, "TEST_VAR_FILE")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if val != "my-secret-token" {
+		t.Errorf("readSecretFile = %q, want %q", val, "my-secret-token")
+	}
+}
+
+func TestReadSecretFile_NotFound(t *testing.T) {
+	_, err := readSecretFile("/nonexistent/path/file.txt", "TEST_VAR_FILE")
+	if err == nil {
+		t.Fatal("expected error for nonexistent file")
+	}
+	if !strings.Contains(err.Error(), "TEST_VAR_FILE") {
+		t.Errorf("error should mention env key, got: %v", err)
+	}
+}
+
+func TestResolveSecret_OnlyVar(t *testing.T) {
+	t.Setenv("TEST_SECRET", "inline-value")
+	os.Unsetenv("TEST_SECRET_FILE")
+
+	val, err := resolveSecret("TEST_SECRET")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if val != "inline-value" {
+		t.Errorf("resolveSecret = %q, want %q", val, "inline-value")
+	}
+}
+
+func TestResolveSecret_OnlyFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "secret")
+	os.WriteFile(path, []byte("file-value\n"), 0644)
+
+	os.Unsetenv("TEST_SECRET")
+	t.Setenv("TEST_SECRET_FILE", path)
+
+	val, err := resolveSecret("TEST_SECRET")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if val != "file-value" {
+		t.Errorf("resolveSecret = %q, want %q", val, "file-value")
+	}
+}
+
+func TestResolveSecret_BothSet(t *testing.T) {
+	t.Setenv("TEST_SECRET", "inline")
+	t.Setenv("TEST_SECRET_FILE", "/some/path")
+
+	_, err := resolveSecret("TEST_SECRET")
+	if err == nil {
+		t.Fatal("expected error when both VAR and VAR_FILE are set")
+	}
+	if !strings.Contains(err.Error(), "TEST_SECRET") {
+		t.Errorf("error should mention var name, got: %v", err)
+	}
+}
+
+func TestResolveSecret_NeitherSet(t *testing.T) {
+	os.Unsetenv("TEST_SECRET")
+	os.Unsetenv("TEST_SECRET_FILE")
+
+	val, err := resolveSecret("TEST_SECRET")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if val != "" {
+		t.Errorf("resolveSecret = %q, want empty string", val)
+	}
+}
+
+func TestResolveSecret_FileNotReadable(t *testing.T) {
+	os.Unsetenv("TEST_SECRET")
+	t.Setenv("TEST_SECRET_FILE", "/nonexistent/secret.txt")
+
+	_, err := resolveSecret("TEST_SECRET")
+	if err == nil {
+		t.Fatal("expected error for nonexistent file")
+	}
+}
+
+// --- Auth env var parsing tests ---
+
+func TestLoad_Auth_HTTPBearerToken(t *testing.T) {
+	setEnvs(t, map[string]string{
+		"DEPHEALTH_NAME":             "app",
+		"DEPHEALTH_DEPS":             "api:http",
+		"DEPHEALTH_API_URL":          "http://api.svc:8080",
+		"DEPHEALTH_API_CRITICAL":     "yes",
+		"DEPHEALTH_API_BEARER_TOKEN": "my-token-123",
+	})
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	dep := cfg.Dependencies[0]
+	if dep.BearerToken != "my-token-123" {
+		t.Errorf("BearerToken = %q, want %q", dep.BearerToken, "my-token-123")
+	}
+}
+
+func TestLoad_Auth_HTTPBasicAuth(t *testing.T) {
+	setEnvs(t, map[string]string{
+		"DEPHEALTH_NAME":            "app",
+		"DEPHEALTH_DEPS":            "api:http",
+		"DEPHEALTH_API_URL":         "http://api.svc:8080",
+		"DEPHEALTH_API_CRITICAL":    "yes",
+		"DEPHEALTH_API_BASIC_USER":  "admin",
+		"DEPHEALTH_API_BASIC_PASS":  "p@ssw0rd",
+	})
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	dep := cfg.Dependencies[0]
+	if dep.BasicUser != "admin" {
+		t.Errorf("BasicUser = %q, want %q", dep.BasicUser, "admin")
+	}
+	if dep.BasicPass != "p@ssw0rd" {
+		t.Errorf("BasicPass = %q, want %q", dep.BasicPass, "p@ssw0rd")
+	}
+}
+
+func TestLoad_Auth_HTTPHeaders(t *testing.T) {
+	setEnvs(t, map[string]string{
+		"DEPHEALTH_NAME":          "app",
+		"DEPHEALTH_DEPS":          "api:http",
+		"DEPHEALTH_API_URL":       "http://api.svc:8080",
+		"DEPHEALTH_API_CRITICAL":  "yes",
+		"DEPHEALTH_API_HEADERS":   `{"X-API-Key":"abc123","X-Custom":"val"}`,
+	})
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	dep := cfg.Dependencies[0]
+	if len(dep.Headers) != 2 {
+		t.Fatalf("len(Headers) = %d, want 2", len(dep.Headers))
+	}
+	if dep.Headers["X-API-Key"] != "abc123" {
+		t.Errorf("Headers[X-API-Key] = %q, want %q", dep.Headers["X-API-Key"], "abc123")
+	}
+	if dep.Headers["X-Custom"] != "val" {
+		t.Errorf("Headers[X-Custom] = %q, want %q", dep.Headers["X-Custom"], "val")
+	}
+}
+
+func TestLoad_Auth_GRPCBearerToken(t *testing.T) {
+	setEnvs(t, map[string]string{
+		"DEPHEALTH_NAME":             "app",
+		"DEPHEALTH_DEPS":             "rpc:grpc",
+		"DEPHEALTH_RPC_HOST":         "grpc.svc",
+		"DEPHEALTH_RPC_PORT":         "443",
+		"DEPHEALTH_RPC_CRITICAL":     "yes",
+		"DEPHEALTH_RPC_BEARER_TOKEN": "grpc-token",
+	})
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	dep := cfg.Dependencies[0]
+	if dep.BearerToken != "grpc-token" {
+		t.Errorf("BearerToken = %q, want %q", dep.BearerToken, "grpc-token")
+	}
+}
+
+func TestLoad_Auth_GRPCBasicAuth(t *testing.T) {
+	setEnvs(t, map[string]string{
+		"DEPHEALTH_NAME":            "app",
+		"DEPHEALTH_DEPS":            "rpc:grpc",
+		"DEPHEALTH_RPC_HOST":        "grpc.svc",
+		"DEPHEALTH_RPC_PORT":        "443",
+		"DEPHEALTH_RPC_CRITICAL":    "yes",
+		"DEPHEALTH_RPC_BASIC_USER":  "user",
+		"DEPHEALTH_RPC_BASIC_PASS":  "pass",
+	})
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	dep := cfg.Dependencies[0]
+	if dep.BasicUser != "user" || dep.BasicPass != "pass" {
+		t.Errorf("BasicUser:BasicPass = %q:%q, want user:pass", dep.BasicUser, dep.BasicPass)
+	}
+}
+
+func TestLoad_Auth_GRPCMetadata(t *testing.T) {
+	setEnvs(t, map[string]string{
+		"DEPHEALTH_NAME":          "app",
+		"DEPHEALTH_DEPS":          "rpc:grpc",
+		"DEPHEALTH_RPC_HOST":      "grpc.svc",
+		"DEPHEALTH_RPC_PORT":      "443",
+		"DEPHEALTH_RPC_CRITICAL":  "yes",
+		"DEPHEALTH_RPC_METADATA":  `{"x-api-key":"key123"}`,
+	})
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	dep := cfg.Dependencies[0]
+	if len(dep.Metadata) != 1 {
+		t.Fatalf("len(Metadata) = %d, want 1", len(dep.Metadata))
+	}
+	if dep.Metadata["x-api-key"] != "key123" {
+		t.Errorf("Metadata[x-api-key] = %q, want %q", dep.Metadata["x-api-key"], "key123")
+	}
+}
+
+func TestLoad_Auth_BearerTokenFromFile(t *testing.T) {
+	dir := t.TempDir()
+	tokenPath := filepath.Join(dir, "token")
+	os.WriteFile(tokenPath, []byte("file-token\n"), 0644)
+
+	os.Unsetenv("DEPHEALTH_API_BEARER_TOKEN")
+	setEnvs(t, map[string]string{
+		"DEPHEALTH_NAME":                  "app",
+		"DEPHEALTH_DEPS":                  "api:http",
+		"DEPHEALTH_API_URL":               "http://api.svc:8080",
+		"DEPHEALTH_API_CRITICAL":          "yes",
+		"DEPHEALTH_API_BEARER_TOKEN_FILE": tokenPath,
+	})
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	dep := cfg.Dependencies[0]
+	if dep.BearerToken != "file-token" {
+		t.Errorf("BearerToken = %q, want %q", dep.BearerToken, "file-token")
+	}
+}
+
+func TestLoad_Auth_BasicPassFromFile(t *testing.T) {
+	dir := t.TempDir()
+	passPath := filepath.Join(dir, "pass")
+	os.WriteFile(passPath, []byte("  file-pass  \n"), 0644)
+
+	os.Unsetenv("DEPHEALTH_API_BASIC_PASS")
+	setEnvs(t, map[string]string{
+		"DEPHEALTH_NAME":                "app",
+		"DEPHEALTH_DEPS":                "api:http",
+		"DEPHEALTH_API_URL":             "http://api.svc:8080",
+		"DEPHEALTH_API_CRITICAL":        "yes",
+		"DEPHEALTH_API_BASIC_USER":      "admin",
+		"DEPHEALTH_API_BASIC_PASS_FILE": passPath,
+	})
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	dep := cfg.Dependencies[0]
+	if dep.BasicPass != "file-pass" {
+		t.Errorf("BasicPass = %q, want %q (trimmed)", dep.BasicPass, "file-pass")
+	}
+}
+
+// --- Auth conflict validation tests ---
+
+func TestLoad_Auth_ConflictBearerAndBasic(t *testing.T) {
+	setEnvs(t, map[string]string{
+		"DEPHEALTH_NAME":             "app",
+		"DEPHEALTH_DEPS":             "api:http",
+		"DEPHEALTH_API_URL":          "http://api.svc:8080",
+		"DEPHEALTH_API_CRITICAL":     "yes",
+		"DEPHEALTH_API_BEARER_TOKEN": "token",
+		"DEPHEALTH_API_BASIC_USER":   "user",
+		"DEPHEALTH_API_BASIC_PASS":   "pass",
+	})
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected error for conflicting bearer + basic auth")
+	}
+	if !strings.Contains(err.Error(), "BEARER_TOKEN") || !strings.Contains(err.Error(), "BASIC_") {
+		t.Errorf("error should mention BEARER_TOKEN and BASIC_, got: %v", err)
+	}
+}
+
+func TestLoad_Auth_IncompleteBasic_NoPass(t *testing.T) {
+	os.Unsetenv("DEPHEALTH_API_BASIC_PASS")
+	os.Unsetenv("DEPHEALTH_API_BASIC_PASS_FILE")
+	setEnvs(t, map[string]string{
+		"DEPHEALTH_NAME":            "app",
+		"DEPHEALTH_DEPS":            "api:http",
+		"DEPHEALTH_API_URL":         "http://api.svc:8080",
+		"DEPHEALTH_API_CRITICAL":    "yes",
+		"DEPHEALTH_API_BASIC_USER":  "admin",
+	})
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected error for basic user without pass")
+	}
+	if !strings.Contains(err.Error(), "BASIC_PASS") {
+		t.Errorf("error should mention BASIC_PASS, got: %v", err)
+	}
+}
+
+func TestLoad_Auth_IncompleteBasic_NoUser(t *testing.T) {
+	os.Unsetenv("DEPHEALTH_API_BASIC_USER")
+	setEnvs(t, map[string]string{
+		"DEPHEALTH_NAME":            "app",
+		"DEPHEALTH_DEPS":            "api:http",
+		"DEPHEALTH_API_URL":         "http://api.svc:8080",
+		"DEPHEALTH_API_CRITICAL":    "yes",
+		"DEPHEALTH_API_BASIC_PASS":  "pass",
+	})
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected error for basic pass without user")
+	}
+	if !strings.Contains(err.Error(), "BASIC_USER") {
+		t.Errorf("error should mention BASIC_USER, got: %v", err)
+	}
+}
+
+func TestLoad_Auth_HeadersOnGRPC(t *testing.T) {
+	setEnvs(t, map[string]string{
+		"DEPHEALTH_NAME":          "app",
+		"DEPHEALTH_DEPS":          "rpc:grpc",
+		"DEPHEALTH_RPC_HOST":      "grpc.svc",
+		"DEPHEALTH_RPC_PORT":      "443",
+		"DEPHEALTH_RPC_CRITICAL":  "yes",
+		"DEPHEALTH_RPC_HEADERS":   `{"X-Key":"val"}`,
+	})
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected error for HEADERS on gRPC dep")
+	}
+	if !strings.Contains(err.Error(), "HEADERS") && !strings.Contains(err.Error(), "HTTP") {
+		t.Errorf("error should mention HEADERS/HTTP, got: %v", err)
+	}
+}
+
+func TestLoad_Auth_MetadataOnHTTP(t *testing.T) {
+	setEnvs(t, map[string]string{
+		"DEPHEALTH_NAME":          "app",
+		"DEPHEALTH_DEPS":          "api:http",
+		"DEPHEALTH_API_URL":       "http://api.svc:8080",
+		"DEPHEALTH_API_CRITICAL":  "yes",
+		"DEPHEALTH_API_METADATA":  `{"x-key":"val"}`,
+	})
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected error for METADATA on HTTP dep")
+	}
+	if !strings.Contains(err.Error(), "METADATA") && !strings.Contains(err.Error(), "gRPC") {
+		t.Errorf("error should mention METADATA/gRPC, got: %v", err)
+	}
+}
+
+func TestLoad_Auth_InvalidHeadersJSON(t *testing.T) {
+	setEnvs(t, map[string]string{
+		"DEPHEALTH_NAME":          "app",
+		"DEPHEALTH_DEPS":          "api:http",
+		"DEPHEALTH_API_URL":       "http://api.svc:8080",
+		"DEPHEALTH_API_CRITICAL":  "yes",
+		"DEPHEALTH_API_HEADERS":   `{invalid-json}`,
+	})
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected error for invalid HEADERS JSON")
+	}
+}
+
+func TestLoad_Auth_InvalidMetadataJSON(t *testing.T) {
+	setEnvs(t, map[string]string{
+		"DEPHEALTH_NAME":          "app",
+		"DEPHEALTH_DEPS":          "rpc:grpc",
+		"DEPHEALTH_RPC_HOST":      "grpc.svc",
+		"DEPHEALTH_RPC_PORT":      "443",
+		"DEPHEALTH_RPC_CRITICAL":  "yes",
+		"DEPHEALTH_RPC_METADATA":  `not-json`,
+	})
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected error for invalid METADATA JSON")
+	}
+}
+
+func TestLoad_Auth_BothVarAndFile(t *testing.T) {
+	dir := t.TempDir()
+	tokenPath := filepath.Join(dir, "token")
+	os.WriteFile(tokenPath, []byte("file-token"), 0644)
+
+	setEnvs(t, map[string]string{
+		"DEPHEALTH_NAME":                  "app",
+		"DEPHEALTH_DEPS":                  "api:http",
+		"DEPHEALTH_API_URL":               "http://api.svc:8080",
+		"DEPHEALTH_API_CRITICAL":          "yes",
+		"DEPHEALTH_API_BEARER_TOKEN":      "inline-token",
+		"DEPHEALTH_API_BEARER_TOKEN_FILE": tokenPath,
+	})
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected error when both BEARER_TOKEN and BEARER_TOKEN_FILE are set")
+	}
+}
+
+// --- Global auth fallback tests ---
+
+func TestLoad_Auth_GlobalBearerApplied(t *testing.T) {
+	os.Unsetenv("DEPHEALTH_API_BEARER_TOKEN")
+	os.Unsetenv("DEPHEALTH_API_BEARER_TOKEN_FILE")
+	setEnvs(t, map[string]string{
+		"DEPHEALTH_NAME":          "app",
+		"DEPHEALTH_DEPS":          "api:http",
+		"DEPHEALTH_API_URL":       "http://api.svc:8080",
+		"DEPHEALTH_API_CRITICAL":  "yes",
+		"DEPHEALTH_BEARER_TOKEN":  "global-token",
+	})
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	dep := cfg.Dependencies[0]
+	if dep.BearerToken != "global-token" {
+		t.Errorf("BearerToken = %q, want %q (from global)", dep.BearerToken, "global-token")
+	}
+}
+
+func TestLoad_Auth_PerDepOverridesGlobal(t *testing.T) {
+	setEnvs(t, map[string]string{
+		"DEPHEALTH_NAME":             "app",
+		"DEPHEALTH_DEPS":             "api:http",
+		"DEPHEALTH_API_URL":          "http://api.svc:8080",
+		"DEPHEALTH_API_CRITICAL":     "yes",
+		"DEPHEALTH_BEARER_TOKEN":     "global-token",
+		"DEPHEALTH_API_BEARER_TOKEN": "per-dep-token",
+	})
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	dep := cfg.Dependencies[0]
+	if dep.BearerToken != "per-dep-token" {
+		t.Errorf("BearerToken = %q, want %q (per-dep override)", dep.BearerToken, "per-dep-token")
+	}
+}
+
+func TestLoad_Auth_GlobalBasicAuthApplied(t *testing.T) {
+	os.Unsetenv("DEPHEALTH_API_BASIC_USER")
+	os.Unsetenv("DEPHEALTH_API_BASIC_PASS")
+	os.Unsetenv("DEPHEALTH_API_BASIC_PASS_FILE")
+	setEnvs(t, map[string]string{
+		"DEPHEALTH_NAME":          "app",
+		"DEPHEALTH_DEPS":          "api:http",
+		"DEPHEALTH_API_URL":       "http://api.svc:8080",
+		"DEPHEALTH_API_CRITICAL":  "yes",
+		"DEPHEALTH_BASIC_USER":    "global-user",
+		"DEPHEALTH_BASIC_PASS":    "global-pass",
+	})
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	dep := cfg.Dependencies[0]
+	if dep.BasicUser != "global-user" || dep.BasicPass != "global-pass" {
+		t.Errorf("BasicUser:BasicPass = %q:%q, want global-user:global-pass",
+			dep.BasicUser, dep.BasicPass)
+	}
+}
+
+func TestLoad_Auth_GlobalHeadersHTTPOnly(t *testing.T) {
+	os.Unsetenv("DEPHEALTH_API_HEADERS")
+	os.Unsetenv("DEPHEALTH_RPC_HEADERS")
+	setEnvs(t, map[string]string{
+		"DEPHEALTH_NAME":          "app",
+		"DEPHEALTH_DEPS":          "api:http,rpc:grpc",
+		"DEPHEALTH_API_URL":       "http://api.svc:8080",
+		"DEPHEALTH_API_CRITICAL":  "yes",
+		"DEPHEALTH_RPC_HOST":      "grpc.svc",
+		"DEPHEALTH_RPC_PORT":      "443",
+		"DEPHEALTH_RPC_CRITICAL":  "yes",
+		"DEPHEALTH_HEADERS":       `{"X-Global":"val"}`,
+	})
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	httpDep := cfg.Dependencies[0]
+	if httpDep.Headers["X-Global"] != "val" {
+		t.Errorf("HTTP dep Headers = %v, want X-Global:val", httpDep.Headers)
+	}
+
+	grpcDep := cfg.Dependencies[1]
+	if len(grpcDep.Headers) != 0 {
+		t.Errorf("gRPC dep should not have global Headers, got %v", grpcDep.Headers)
+	}
+}
+
+func TestLoad_Auth_GlobalMetadataGRPCOnly(t *testing.T) {
+	os.Unsetenv("DEPHEALTH_API_METADATA")
+	os.Unsetenv("DEPHEALTH_RPC_METADATA")
+	setEnvs(t, map[string]string{
+		"DEPHEALTH_NAME":          "app",
+		"DEPHEALTH_DEPS":          "api:http,rpc:grpc",
+		"DEPHEALTH_API_URL":       "http://api.svc:8080",
+		"DEPHEALTH_API_CRITICAL":  "yes",
+		"DEPHEALTH_RPC_HOST":      "grpc.svc",
+		"DEPHEALTH_RPC_PORT":      "443",
+		"DEPHEALTH_RPC_CRITICAL":  "yes",
+		"DEPHEALTH_METADATA":      `{"x-global-key":"val"}`,
+	})
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	httpDep := cfg.Dependencies[0]
+	if len(httpDep.Metadata) != 0 {
+		t.Errorf("HTTP dep should not have global Metadata, got %v", httpDep.Metadata)
+	}
+
+	grpcDep := cfg.Dependencies[1]
+	if grpcDep.Metadata["x-global-key"] != "val" {
+		t.Errorf("gRPC dep Metadata = %v, want x-global-key:val", grpcDep.Metadata)
+	}
+}
+
+func TestLoad_Auth_PerDepBearerClearsGlobalBasic(t *testing.T) {
+	os.Unsetenv("DEPHEALTH_API_BASIC_USER")
+	os.Unsetenv("DEPHEALTH_API_BASIC_PASS")
+	os.Unsetenv("DEPHEALTH_API_BASIC_PASS_FILE")
+	setEnvs(t, map[string]string{
+		"DEPHEALTH_NAME":             "app",
+		"DEPHEALTH_DEPS":             "api:http",
+		"DEPHEALTH_API_URL":          "http://api.svc:8080",
+		"DEPHEALTH_API_CRITICAL":     "yes",
+		"DEPHEALTH_BASIC_USER":       "global-user",
+		"DEPHEALTH_BASIC_PASS":       "global-pass",
+		"DEPHEALTH_API_BEARER_TOKEN": "per-dep-token",
+	})
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	dep := cfg.Dependencies[0]
+	if dep.BearerToken != "per-dep-token" {
+		t.Errorf("BearerToken = %q, want %q", dep.BearerToken, "per-dep-token")
+	}
+	if dep.BasicUser != "" || dep.BasicPass != "" {
+		t.Errorf("global basic auth should be cleared, got user=%q pass=%q", dep.BasicUser, dep.BasicPass)
+	}
+}
+
+func TestLoad_Auth_PerDepBasicClearsGlobalBearer(t *testing.T) {
+	os.Unsetenv("DEPHEALTH_API_BEARER_TOKEN")
+	os.Unsetenv("DEPHEALTH_API_BEARER_TOKEN_FILE")
+	setEnvs(t, map[string]string{
+		"DEPHEALTH_NAME":            "app",
+		"DEPHEALTH_DEPS":            "api:http",
+		"DEPHEALTH_API_URL":         "http://api.svc:8080",
+		"DEPHEALTH_API_CRITICAL":    "yes",
+		"DEPHEALTH_BEARER_TOKEN":    "global-token",
+		"DEPHEALTH_API_BASIC_USER":  "per-dep-user",
+		"DEPHEALTH_API_BASIC_PASS":  "per-dep-pass",
+	})
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	dep := cfg.Dependencies[0]
+	if dep.BearerToken != "" {
+		t.Errorf("global bearer should be cleared, got %q", dep.BearerToken)
+	}
+	if dep.BasicUser != "per-dep-user" || dep.BasicPass != "per-dep-pass" {
+		t.Errorf("BasicUser:BasicPass = %q:%q, want per-dep-user:per-dep-pass",
+			dep.BasicUser, dep.BasicPass)
+	}
+}
+
+func TestLoad_Auth_GlobalBearerTokenFromFile(t *testing.T) {
+	dir := t.TempDir()
+	tokenPath := filepath.Join(dir, "global-token")
+	os.WriteFile(tokenPath, []byte("global-file-token\n"), 0644)
+
+	os.Unsetenv("DEPHEALTH_BEARER_TOKEN")
+	os.Unsetenv("DEPHEALTH_API_BEARER_TOKEN")
+	os.Unsetenv("DEPHEALTH_API_BEARER_TOKEN_FILE")
+	setEnvs(t, map[string]string{
+		"DEPHEALTH_NAME":               "app",
+		"DEPHEALTH_DEPS":               "api:http",
+		"DEPHEALTH_API_URL":            "http://api.svc:8080",
+		"DEPHEALTH_API_CRITICAL":       "yes",
+		"DEPHEALTH_BEARER_TOKEN_FILE":  tokenPath,
+	})
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	dep := cfg.Dependencies[0]
+	if dep.BearerToken != "global-file-token" {
+		t.Errorf("BearerToken = %q, want %q (from global file)", dep.BearerToken, "global-file-token")
+	}
+}
+
+func TestLoad_Auth_InvalidGlobalHeadersJSON(t *testing.T) {
+	setEnvs(t, map[string]string{
+		"DEPHEALTH_NAME":     "app",
+		"DEPHEALTH_HEADERS":  `{bad`,
+	})
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected error for invalid global HEADERS JSON")
+	}
+}
+
+func TestLoad_Auth_InvalidGlobalMetadataJSON(t *testing.T) {
+	setEnvs(t, map[string]string{
+		"DEPHEALTH_NAME":     "app",
+		"DEPHEALTH_METADATA": `[not-an-object]`,
+	})
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected error for invalid global METADATA JSON")
+	}
+}
+
+func TestLoad_Auth_GlobalBothTokenAndFile(t *testing.T) {
+	dir := t.TempDir()
+	tokenPath := filepath.Join(dir, "token")
+	os.WriteFile(tokenPath, []byte("token"), 0644)
+
+	setEnvs(t, map[string]string{
+		"DEPHEALTH_NAME":              "app",
+		"DEPHEALTH_BEARER_TOKEN":      "inline",
+		"DEPHEALTH_BEARER_TOKEN_FILE": tokenPath,
+	})
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected error when both global BEARER_TOKEN and BEARER_TOKEN_FILE are set")
+	}
+}
+
+// --- validateAuth direct tests ---
+
+func TestValidateAuth_NoAuth(t *testing.T) {
+	dep := &Dependency{Name: "test", Type: "http"}
+	if err := validateAuth(dep); err != nil {
+		t.Errorf("unexpected error for no auth: %v", err)
+	}
+}
+
+func TestValidateAuth_BearerOnly(t *testing.T) {
+	dep := &Dependency{Name: "test", Type: "http", BearerToken: "tok"}
+	if err := validateAuth(dep); err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateAuth_BasicOnly(t *testing.T) {
+	dep := &Dependency{Name: "test", Type: "http", BasicUser: "u", BasicPass: "p"}
+	if err := validateAuth(dep); err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateAuth_HeadersOnHTTP(t *testing.T) {
+	dep := &Dependency{Name: "test", Type: "http", Headers: map[string]string{"K": "V"}}
+	if err := validateAuth(dep); err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateAuth_MetadataOnGRPC(t *testing.T) {
+	dep := &Dependency{Name: "test", Type: "grpc", Metadata: map[string]string{"k": "v"}}
+	if err := validateAuth(dep); err != nil {
+		t.Errorf("unexpected error: %v", err)
 	}
 }
 

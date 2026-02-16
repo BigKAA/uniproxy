@@ -2,6 +2,7 @@
 package config
 
 import (
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -64,6 +65,13 @@ type Dependency struct {
 
 	// AMQP-specific.
 	AMQPURL string
+
+	// Authentication (mutually exclusive: only one method per dependency).
+	BearerToken string
+	BasicUser   string
+	BasicPass   string
+	Headers     map[string]string // HTTP-only: custom headers
+	Metadata    map[string]string // gRPC-only: custom metadata
 }
 
 // Load parses configuration from environment variables.
@@ -134,10 +142,16 @@ func Load() (*Config, error) {
 	}
 	cfg.FetchTimeout = time.Duration(fetchSec * float64(time.Second))
 
+	// Global auth defaults.
+	ga, err := loadGlobalAuth()
+	if err != nil {
+		return nil, err
+	}
+
 	// Dependencies (optional — service may have none).
 	depsStr := os.Getenv("DEPHEALTH_DEPS")
 	if depsStr != "" {
-		deps, err := parseDeps(depsStr)
+		deps, err := parseDeps(depsStr, ga)
 		if err != nil {
 			return nil, err
 		}
@@ -191,8 +205,115 @@ func loadLogConfig() (LogConfig, error) {
 	return lc, nil
 }
 
+// globalAuth holds default authentication values parsed from global env vars.
+type globalAuth struct {
+	BearerToken string
+	BasicUser   string
+	BasicPass   string
+	Headers     map[string]string
+	Metadata    map[string]string
+}
+
+// loadGlobalAuth parses global authentication env vars (DEPHEALTH_BEARER_TOKEN, etc.).
+func loadGlobalAuth() (globalAuth, error) {
+	var ga globalAuth
+	var err error
+
+	ga.BearerToken, err = resolveSecret("DEPHEALTH_BEARER_TOKEN")
+	if err != nil {
+		return ga, err
+	}
+
+	ga.BasicUser = os.Getenv("DEPHEALTH_BASIC_USER")
+
+	ga.BasicPass, err = resolveSecret("DEPHEALTH_BASIC_PASS")
+	if err != nil {
+		return ga, err
+	}
+
+	if v := os.Getenv("DEPHEALTH_HEADERS"); v != "" {
+		if err := json.Unmarshal([]byte(v), &ga.Headers); err != nil {
+			return ga, fmt.Errorf("invalid DEPHEALTH_HEADERS JSON: %w", err)
+		}
+	}
+
+	if v := os.Getenv("DEPHEALTH_METADATA"); v != "" {
+		if err := json.Unmarshal([]byte(v), &ga.Metadata); err != nil {
+			return ga, fmt.Errorf("invalid DEPHEALTH_METADATA JSON: %w", err)
+		}
+	}
+
+	return ga, nil
+}
+
+// resolveSecret resolves a secret value from env var or _FILE variant.
+// If both KEY and KEY_FILE are set, returns an error.
+// If KEY_FILE is set, reads the file and returns its trimmed content.
+func resolveSecret(envKey string) (string, error) {
+	val := os.Getenv(envKey)
+	fileVal := os.Getenv(envKey + "_FILE")
+
+	if val != "" && fileVal != "" {
+		return "", fmt.Errorf("both %s and %s_FILE are set; use only one", envKey, envKey)
+	}
+
+	if fileVal != "" {
+		return readSecretFile(fileVal, envKey+"_FILE")
+	}
+
+	return val, nil
+}
+
+// readSecretFile reads a secret from a file path, trimming whitespace.
+func readSecretFile(path, envKey string) (string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("%s: cannot read file %q: %w", envKey, path, err)
+	}
+	return strings.TrimSpace(string(data)), nil
+}
+
+// validateAuth checks for conflicting auth methods on a dependency.
+func validateAuth(dep *Dependency) error {
+	methods := 0
+	if dep.BearerToken != "" {
+		methods++
+	}
+	if dep.BasicUser != "" || dep.BasicPass != "" {
+		methods++
+	}
+	if len(dep.Headers) > 0 {
+		methods++
+	}
+	if len(dep.Metadata) > 0 {
+		methods++
+	}
+
+	if methods > 1 {
+		return fmt.Errorf("dependency %q: conflicting auth methods; specify only one of bearer token, basic auth, headers, or metadata", dep.Name)
+	}
+
+	// Incomplete Basic Auth.
+	if dep.BasicUser != "" && dep.BasicPass == "" {
+		return fmt.Errorf("dependency %q: BASIC_USER is set but BASIC_PASS is missing", dep.Name)
+	}
+	if dep.BasicPass != "" && dep.BasicUser == "" {
+		return fmt.Errorf("dependency %q: BASIC_PASS is set but BASIC_USER is missing", dep.Name)
+	}
+
+	// Type-appropriate check.
+	if len(dep.Headers) > 0 && dep.Type != "http" {
+		return fmt.Errorf("dependency %q: HEADERS is only valid for HTTP dependencies, got type %q", dep.Name, dep.Type)
+	}
+	if len(dep.Metadata) > 0 && dep.Type != "grpc" {
+		return fmt.Errorf("dependency %q: METADATA is only valid for gRPC dependencies, got type %q", dep.Name, dep.Type)
+	}
+
+	return nil
+}
+
 // parseDeps parses "name1:type1,name2:type2,..." into a slice of Dependency.
-func parseDeps(s string) ([]Dependency, error) {
+func parseDeps(s string, ga globalAuth) ([]Dependency, error) {
 	pairs := strings.Split(s, ",")
 	deps := make([]Dependency, 0, len(pairs))
 
@@ -214,7 +335,7 @@ func parseDeps(s string) ([]Dependency, error) {
 			return nil, fmt.Errorf("dependency %q: unsupported type %q", name, depType)
 		}
 
-		dep, err := parseSingleDep(name, depType)
+		dep, err := parseSingleDep(name, depType, ga)
 		if err != nil {
 			return nil, err
 		}
@@ -225,7 +346,7 @@ func parseDeps(s string) ([]Dependency, error) {
 }
 
 // parseSingleDep reads per-dependency env vars for a given dependency.
-func parseSingleDep(name, depType string) (Dependency, error) {
+func parseSingleDep(name, depType string, ga globalAuth) (Dependency, error) {
 	prefix := "DEPHEALTH_" + EnvName(name) + "_"
 
 	dep := Dependency{
@@ -332,7 +453,87 @@ func parseSingleDep(name, depType string) (Dependency, error) {
 		dep.AMQPURL = os.Getenv(prefix + "AMQP_URL")
 	}
 
+	// Authentication: resolve per-dep values, fall back to global.
+	if err := loadDepAuth(&dep, prefix, ga); err != nil {
+		return dep, err
+	}
+
+	if err := validateAuth(&dep); err != nil {
+		return dep, err
+	}
+
 	return dep, nil
+}
+
+// loadDepAuth parses auth env vars for a single dependency with global fallback.
+func loadDepAuth(dep *Dependency, prefix string, ga globalAuth) error {
+	// Bearer token.
+	perDepToken, err := resolveSecret(prefix + "BEARER_TOKEN")
+	if err != nil {
+		return fmt.Errorf("dependency %q: %w", dep.Name, err)
+	}
+	if perDepToken != "" {
+		dep.BearerToken = perDepToken
+	} else if ga.BearerToken != "" {
+		dep.BearerToken = ga.BearerToken
+	}
+
+	// Basic Auth username.
+	perDepUser := os.Getenv(prefix + "BASIC_USER")
+	if perDepUser != "" {
+		dep.BasicUser = perDepUser
+	} else if ga.BasicUser != "" {
+		dep.BasicUser = ga.BasicUser
+	}
+
+	// Basic Auth password.
+	perDepPass, err := resolveSecret(prefix + "BASIC_PASS")
+	if err != nil {
+		return fmt.Errorf("dependency %q: %w", dep.Name, err)
+	}
+	if perDepPass != "" {
+		dep.BasicPass = perDepPass
+	} else if ga.BasicPass != "" {
+		dep.BasicPass = ga.BasicPass
+	}
+
+	// If per-dep sets both bearer and basic — that's a conflict.
+	hasPerDepBearer := perDepToken != ""
+	hasPerDepBasic := perDepUser != "" || perDepPass != ""
+	if hasPerDepBearer && hasPerDepBasic {
+		return fmt.Errorf("dependency %q: both BEARER_TOKEN and BASIC_USER/BASIC_PASS are set; use only one auth method", dep.Name)
+	}
+
+	// Override logic: if any per-dep auth is set, clear inherited global values
+	// that belong to a different auth method.
+	if hasPerDepBearer {
+		dep.BasicUser = ""
+		dep.BasicPass = ""
+	} else if hasPerDepBasic {
+		dep.BearerToken = ""
+	}
+
+	// Custom HTTP headers (per-dep overrides global entirely).
+	if v := os.Getenv(prefix + "HEADERS"); v != "" {
+		dep.Headers = make(map[string]string)
+		if err := json.Unmarshal([]byte(v), &dep.Headers); err != nil {
+			return fmt.Errorf("dependency %q: invalid %sHEADERS JSON: %w", dep.Name, prefix, err)
+		}
+	} else if dep.Type == "http" && len(ga.Headers) > 0 {
+		dep.Headers = ga.Headers
+	}
+
+	// Custom gRPC metadata (per-dep overrides global entirely).
+	if v := os.Getenv(prefix + "METADATA"); v != "" {
+		dep.Metadata = make(map[string]string)
+		if err := json.Unmarshal([]byte(v), &dep.Metadata); err != nil {
+			return fmt.Errorf("dependency %q: invalid %sMETADATA JSON: %w", dep.Name, prefix, err)
+		}
+	} else if dep.Type == "grpc" && len(ga.Metadata) > 0 {
+		dep.Metadata = ga.Metadata
+	}
+
+	return nil
 }
 
 // EnvName converts a dependency name to environment variable format:
