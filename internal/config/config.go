@@ -481,47 +481,33 @@ func loadZoneAuth(prefix string, ac *AuthConfig, zone string) error {
 		APIKey:   apiKey,
 	}
 
+	// Resolve target zone pointer.
+	var target **ZoneAuth
 	switch zone {
 	case "status":
-		if ac.Status == nil {
-			ac.Status = za
-		} else {
-			// Merge: env values override existing YAML values.
-			if za.Method != "" {
-				ac.Status.Method = za.Method
-			}
-			if za.Username != "" {
-				ac.Status.Username = za.Username
-			}
-			if za.Password != "" {
-				ac.Status.Password = za.Password
-			}
-			if za.Token != "" {
-				ac.Status.Token = za.Token
-			}
-			if za.APIKey != "" {
-				ac.Status.APIKey = za.APIKey
-			}
-		}
+		target = &ac.Status
 	case "metrics":
-		if ac.Metrics == nil {
-			ac.Metrics = za
-		} else {
-			if za.Method != "" {
-				ac.Metrics.Method = za.Method
-			}
-			if za.Username != "" {
-				ac.Metrics.Username = za.Username
-			}
-			if za.Password != "" {
-				ac.Metrics.Password = za.Password
-			}
-			if za.Token != "" {
-				ac.Metrics.Token = za.Token
-			}
-			if za.APIKey != "" {
-				ac.Metrics.APIKey = za.APIKey
-			}
+		target = &ac.Metrics
+	}
+
+	if *target == nil {
+		*target = za
+	} else {
+		// Merge: env values override existing YAML values.
+		if za.Method != "" {
+			(*target).Method = za.Method
+		}
+		if za.Username != "" {
+			(*target).Username = za.Username
+		}
+		if za.Password != "" {
+			(*target).Password = za.Password
+		}
+		if za.Token != "" {
+			(*target).Token = za.Token
+		}
+		if za.APIKey != "" {
+			(*target).APIKey = za.APIKey
 		}
 	}
 
@@ -709,36 +695,14 @@ func parseSingleDep(name, depType string, ga globalAuth) (Dependency, error) {
 	switch depType {
 	case "http":
 		dep.HealthPath = os.Getenv(prefix + "HEALTH_PATH")
-		if v := os.Getenv(prefix + "TLS"); v != "" {
-			b, err := parseBool(v)
-			if err != nil {
-				return dep, fmt.Errorf("dependency %q: invalid %sTLS: %w", name, prefix, err)
-			}
-			dep.TLS = &b
-		}
-		if v := os.Getenv(prefix + "TLS_SKIP_VERIFY"); v != "" {
-			b, err := parseBool(v)
-			if err != nil {
-				return dep, fmt.Errorf("dependency %q: invalid %sTLS_SKIP_VERIFY: %w", name, prefix, err)
-			}
-			dep.TLSSkipVerify = &b
+		if err := parseTLSOptions(&dep, name, prefix); err != nil {
+			return dep, err
 		}
 
 	case "grpc":
 		dep.GRPCServiceName = os.Getenv(prefix + "GRPC_SERVICE_NAME")
-		if v := os.Getenv(prefix + "TLS"); v != "" {
-			b, err := parseBool(v)
-			if err != nil {
-				return dep, fmt.Errorf("dependency %q: invalid %sTLS: %w", name, prefix, err)
-			}
-			dep.TLS = &b
-		}
-		if v := os.Getenv(prefix + "TLS_SKIP_VERIFY"); v != "" {
-			b, err := parseBool(v)
-			if err != nil {
-				return dep, fmt.Errorf("dependency %q: invalid %sTLS_SKIP_VERIFY: %w", name, prefix, err)
-			}
-			dep.TLSSkipVerify = &b
+		if err := parseTLSOptions(&dep, name, prefix); err != nil {
+			return dep, err
 		}
 
 	case "postgres":
@@ -848,6 +812,25 @@ func loadDepAuth(dep *Dependency, prefix string, ga globalAuth) error {
 // "uniproxy-02" → "UNIPROXY_02".
 func EnvName(name string) string {
 	return strings.ToUpper(strings.ReplaceAll(name, "-", "_"))
+}
+
+// parseTLSOptions parses TLS and TLS_SKIP_VERIFY env vars for a dependency.
+func parseTLSOptions(dep *Dependency, name, prefix string) error {
+	if v := os.Getenv(prefix + "TLS"); v != "" {
+		b, err := parseBool(v)
+		if err != nil {
+			return fmt.Errorf("dependency %q: invalid %sTLS: %w", name, prefix, err)
+		}
+		dep.TLS = &b
+	}
+	if v := os.Getenv(prefix + "TLS_SKIP_VERIFY"); v != "" {
+		b, err := parseBool(v)
+		if err != nil {
+			return fmt.Errorf("dependency %q: invalid %sTLS_SKIP_VERIFY: %w", name, prefix, err)
+		}
+		dep.TLSSkipVerify = &b
+	}
+	return nil
 }
 
 // parseBool parses common boolean strings.

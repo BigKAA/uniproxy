@@ -228,14 +228,14 @@ cp .templates/DEVELOPMENT_PLAN_TEMPLATE.md plans/feature_name.md
 Types: `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `chore`
 
 ### Workflow Steps
-1. Create feature branch from `master`
+1. Create feature branch from `main`
 2. Make changes and commit
-3. Merge to `master` with `--no-ff` or via PR
+3. Merge to `main` with `--no-ff` or via PR
 4. Delete feature branch
 5. Tag releases with `vX.Y.Z` (semver)
 
 ### Quick Fixes
-Small fixes (typos, minor tweaks) can be committed directly to `master`.
+Small fixes (typos, minor tweaks) can be committed directly to `main`.
 
 ## Related Projects
 

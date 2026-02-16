@@ -25,6 +25,10 @@ go.work
 .DS_Store
 Thumbs.db
 
+# Environment
+.env
+.env.*
+
 # AI
 .templates/
 .serena/

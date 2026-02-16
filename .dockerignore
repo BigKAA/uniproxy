@@ -1,0 +1,33 @@
+# Version control
+.git/
+.gitignore
+
+# Documentation
+*.md
+docs/
+plans/
+LICENSE
+NOTICE
+
+# Deployment configs
+deploy/
+charts/
+examples/
+
+# AI / IDE
+.templates/
+.serena/
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.*
+
+# Build artifacts
+*.test
+*.out

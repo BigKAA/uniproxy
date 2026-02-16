@@ -364,7 +364,6 @@ func TestHandleRoot_DetailFormat_NilHealthDetails(t *testing.T) {
 	if _, ok := raw["dependencies"]; !ok {
 		t.Error("missing dependencies field")
 	}
-	_ = srv
 }
 
 func TestHandleRoot_DetailFormat_UnknownState(t *testing.T) {
