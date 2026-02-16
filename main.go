@@ -62,7 +62,15 @@ func main() {
 	slog.Info("dephealth started", "name", cfg.Name)
 
 	// Start HTTP server.
-	srv := server.New(dh, cfg.Name, cfg.FetchTimeout)
+	// Log auth config.
+	statusAuth := cfg.Auth.ResolveZone("status")
+	metricsAuth := cfg.Auth.ResolveZone("metrics")
+	slog.Info("auth config",
+		"status_method", statusAuth.Method,
+		"metrics_method", metricsAuth.Method,
+	)
+
+	srv := server.New(dh, cfg.Name, cfg.FetchTimeout, cfg.Auth)
 	httpServer := &http.Server{
 		Addr:    cfg.ListenAddr,
 		Handler: srv.Handler(),

@@ -15,6 +15,9 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
+	"github.com/BigKAA/uniproxy/internal/auth"
+	"github.com/BigKAA/uniproxy/internal/config"
+
 	"github.com/BigKAA/topologymetrics/sdk-go/dephealth"
 )
 
@@ -70,14 +73,16 @@ type Server struct {
 	dh           HealthChecker
 	name         string
 	fetchTimeout time.Duration
+	authCfg      config.AuthConfig
 }
 
 // New creates a new Server wired to the given health checker.
-func New(dh HealthChecker, name string, fetchTimeout time.Duration) *Server {
+func New(dh HealthChecker, name string, fetchTimeout time.Duration, authCfg config.AuthConfig) *Server {
 	s := &Server{
 		dh:           dh,
 		name:         name,
 		fetchTimeout: fetchTimeout,
+		authCfg:      authCfg,
 	}
 	s.routes()
 	return s
@@ -87,10 +92,25 @@ func (s *Server) routes() {
 	r := chi.NewRouter()
 	r.Use(middleware.Recoverer)
 
-	r.Get("/", s.handleRoot)
+	// Probes — always open.
 	r.Get("/healthz", s.handleHealthz)
 	r.Get("/readyz", s.handleReadyz)
-	r.Handle("/metrics", promhttp.Handler())
+
+	// Status API — with optional auth middleware.
+	statusAuth := s.authCfg.ResolveZone("status")
+	if mw := auth.Middleware(statusAuth); mw != nil {
+		r.With(mw).Get("/", s.handleRoot)
+	} else {
+		r.Get("/", s.handleRoot)
+	}
+
+	// Metrics — with optional auth middleware.
+	metricsAuth := s.authCfg.ResolveZone("metrics")
+	if mw := auth.Middleware(metricsAuth); mw != nil {
+		r.With(mw).Handle("/metrics", promhttp.Handler())
+	} else {
+		r.Handle("/metrics", promhttp.Handler())
+	}
 
 	s.router = r
 }

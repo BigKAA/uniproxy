@@ -153,6 +153,114 @@ spec:
             {{- end }}
             {{- end }}
             {{- end }}
+            {{- /* Server-side authentication */}}
+            {{- with $.Values.serverAuth }}
+            {{- if and .method (ne .method "none") }}
+            - name: AUTH_METHOD
+              value: {{ .method | quote }}
+            {{- if eq .method "basic" }}
+            {{- if .username }}
+            - name: AUTH_USER
+              value: {{ .username | quote }}
+            {{- end }}
+            {{- if .existingSecret }}
+            {{- if .passwordKey }}
+            - name: AUTH_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .existingSecret }}
+                  key: {{ .passwordKey }}
+            {{- end }}
+            {{- else if .password }}
+            - name: AUTH_PASS
+              value: {{ .password | quote }}
+            {{- end }}
+            {{- end }}
+            {{- if eq .method "bearer" }}
+            {{- if .existingSecret }}
+            {{- if .tokenKey }}
+            - name: AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .existingSecret }}
+                  key: {{ .tokenKey }}
+            {{- end }}
+            {{- else if .token }}
+            - name: AUTH_TOKEN
+              value: {{ .token | quote }}
+            {{- end }}
+            {{- end }}
+            {{- if eq .method "apikey" }}
+            {{- if .existingSecret }}
+            {{- if .apiKeyKey }}
+            - name: AUTH_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .existingSecret }}
+                  key: {{ .apiKeyKey }}
+            {{- end }}
+            {{- else if .apiKey }}
+            - name: AUTH_API_KEY
+              value: {{ .apiKey | quote }}
+            {{- end }}
+            {{- end }}
+            {{- end }}
+            {{- /* Per-zone: status */}}
+            {{- if .status }}
+            {{- if .status.method }}
+            - name: AUTH_STATUS_METHOD
+              value: {{ .status.method | quote }}
+            {{- if eq .status.method "basic" }}
+            {{- if .status.username }}
+            - name: AUTH_STATUS_USER
+              value: {{ .status.username | quote }}
+            {{- end }}
+            {{- if .status.password }}
+            - name: AUTH_STATUS_PASS
+              value: {{ .status.password | quote }}
+            {{- end }}
+            {{- end }}
+            {{- if and (eq .status.method "bearer") .status.token }}
+            - name: AUTH_STATUS_TOKEN
+              value: {{ .status.token | quote }}
+            {{- end }}
+            {{- if and (eq .status.method "apikey") .status.apiKey }}
+            - name: AUTH_STATUS_API_KEY
+              value: {{ .status.apiKey | quote }}
+            {{- end }}
+            {{- end }}
+            {{- end }}
+            {{- /* Per-zone: metrics */}}
+            {{- if .metrics }}
+            {{- if .metrics.method }}
+            - name: AUTH_METRICS_METHOD
+              value: {{ .metrics.method | quote }}
+            {{- if eq .metrics.method "basic" }}
+            {{- if .metrics.username }}
+            - name: AUTH_METRICS_USER
+              value: {{ .metrics.username | quote }}
+            {{- end }}
+            {{- if .metrics.password }}
+            - name: AUTH_METRICS_PASS
+              value: {{ .metrics.password | quote }}
+            {{- end }}
+            {{- end }}
+            {{- if and (eq .metrics.method "bearer") .metrics.token }}
+            - name: AUTH_METRICS_TOKEN
+              value: {{ .metrics.token | quote }}
+            {{- end }}
+            {{- if and (eq .metrics.method "apikey") .metrics.apiKey }}
+            - name: AUTH_METRICS_API_KEY
+              value: {{ .metrics.apiKey | quote }}
+            {{- end }}
+            {{- end }}
+            {{- end }}
+            {{- end }}
+            {{- /* YAML config file */}}
+            {{- if $.Values.configFile.enabled }}
+            - name: CONFIG_FILE
+              value: "/config/config.yaml"
+            {{- end }}
             - name: POD_NAME
               valueFrom:
                 fieldRef:
@@ -161,6 +269,12 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
+          {{- if $.Values.configFile.enabled }}
+          volumeMounts:
+            - name: config
+              mountPath: /config
+              readOnly: true
+          {{- end }}
           readinessProbe:
             httpGet:
               path: /readyz
@@ -175,4 +289,10 @@ spec:
             periodSeconds: 10
           resources:
             {{- toYaml $.Values.resources | nindent 12 }}
+      {{- if $.Values.configFile.enabled }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ .name }}-config
+      {{- end }}
 {{- end }}

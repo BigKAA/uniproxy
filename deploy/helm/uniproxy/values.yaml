@@ -37,6 +37,45 @@ probes:
   readinessDelay: 5
   livenessDelay: 5
 
+# Server-side authentication for uniproxy endpoints.
+# Protects / (status API) and /metrics independently.
+# /healthz and /readyz are always open.
+serverAuth:
+  # Global auth method: none | basic | bearer | apikey
+  method: "none"
+  # Global credentials (used as fallback for zones):
+  # username: ""
+  # password: ""
+  # token: ""
+  # apiKey: ""
+  #
+  # Use an existing Kubernetes Secret for credentials:
+  # existingSecret: ""
+  # tokenKey: ""       — key in Secret for bearer token
+  # passwordKey: ""    — key in Secret for password
+  # apiKeyKey: ""      — key in Secret for API key
+  #
+  # Per-zone overrides:
+  # status:
+  #   method: "basic"
+  #   username: "admin"
+  #   password: "secret"
+  # metrics:
+  #   method: "none"
+
+# YAML configuration file (alternative to env vars).
+# If configFile.enabled=true, a ConfigMap with the YAML content is created
+# and mounted as CONFIG_FILE in the container.
+configFile:
+  enabled: false
+  # content: |
+  #   name: my-proxy
+  #   dependencies:
+  #     - name: httpbin
+  #       type: http
+  #       url: "http://httpbin.org"
+  #       critical: true
+
 # Instance list. Each instance defines a uniproxy deployment with its own connections.
 #
 # Connection auth options (per-connection, all optional):

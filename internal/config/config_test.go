@@ -1265,3 +1265,847 @@ func TestEnvName(t *testing.T) {
 		}
 	}
 }
+
+// --- YAML + Env merge tests (Phase 2.5) ---
+
+func TestLoad_ConfigFile_FullYAML(t *testing.T) {
+	yamlContent := `
+name: yaml-app
+listenAddr: ":9090"
+log:
+  format: json
+  level: debug
+  timeFormat: unix
+checkInterval: "30s"
+fetchTimeout: "10"
+dependencies:
+  - name: httpbin
+    type: http
+    url: "http://httpbin.org"
+    critical: true
+`
+	path := writeTestYAML(t, yamlContent)
+	t.Setenv("CONFIG_FILE", path)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Name != "yaml-app" {
+		t.Errorf("Name = %q, want %q", cfg.Name, "yaml-app")
+	}
+	if cfg.ListenAddr != ":9090" {
+		t.Errorf("ListenAddr = %q, want %q", cfg.ListenAddr, ":9090")
+	}
+	if cfg.Log.Format != "json" {
+		t.Errorf("Log.Format = %q, want %q", cfg.Log.Format, "json")
+	}
+	if cfg.Log.Level != "debug" {
+		t.Errorf("Log.Level = %q, want %q", cfg.Log.Level, "debug")
+	}
+	if cfg.Log.TimeFormat != "unix" {
+		t.Errorf("Log.TimeFormat = %q, want %q", cfg.Log.TimeFormat, "unix")
+	}
+	if cfg.CheckInterval != 30*time.Second {
+		t.Errorf("CheckInterval = %v, want 30s", cfg.CheckInterval)
+	}
+	if cfg.FetchTimeout != 10*time.Second {
+		t.Errorf("FetchTimeout = %v, want 10s", cfg.FetchTimeout)
+	}
+	if len(cfg.Dependencies) != 1 {
+		t.Fatalf("Dependencies count = %d, want 1", len(cfg.Dependencies))
+	}
+	dep := cfg.Dependencies[0]
+	if dep.Name != "httpbin" || dep.Type != "http" || dep.URL != "http://httpbin.org" || !dep.Critical {
+		t.Errorf("dep = %+v", dep)
+	}
+}
+
+func TestLoad_ConfigFile_EnvOverridesYAML(t *testing.T) {
+	yamlContent := `
+name: yaml-name
+listenAddr: ":9090"
+log:
+  format: text
+  level: info
+checkInterval: "30s"
+`
+	path := writeTestYAML(t, yamlContent)
+	setEnvs(t, map[string]string{
+		"CONFIG_FILE":            path,
+		"DEPHEALTH_NAME":        "env-name",
+		"LISTEN_ADDR":           ":7070",
+		"LOG_FORMAT":            "json",
+		"LOG_LEVEL":             "warn",
+		"DEPHEALTH_CHECK_INTERVAL": "60",
+	})
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Env overrides YAML.
+	if cfg.Name != "env-name" {
+		t.Errorf("Name = %q, want %q (env override)", cfg.Name, "env-name")
+	}
+	if cfg.ListenAddr != ":7070" {
+		t.Errorf("ListenAddr = %q, want %q (env override)", cfg.ListenAddr, ":7070")
+	}
+	if cfg.Log.Format != "json" {
+		t.Errorf("Log.Format = %q, want %q (env override)", cfg.Log.Format, "json")
+	}
+	if cfg.Log.Level != "warn" {
+		t.Errorf("Log.Level = %q, want %q (env override)", cfg.Log.Level, "warn")
+	}
+	if cfg.CheckInterval != 60*time.Second {
+		t.Errorf("CheckInterval = %v, want 60s (env override)", cfg.CheckInterval)
+	}
+}
+
+func TestLoad_ConfigFile_EnvDepsReplaceYAMLDeps(t *testing.T) {
+	yamlContent := `
+name: yaml-app
+dependencies:
+  - name: yaml-svc
+    type: http
+    url: "http://yaml-svc.local"
+    critical: true
+  - name: yaml-redis
+    type: redis
+    host: "redis.local"
+    port: "6379"
+    critical: false
+`
+	path := writeTestYAML(t, yamlContent)
+	setEnvs(t, map[string]string{
+		"CONFIG_FILE":            path,
+		"DEPHEALTH_DEPS":        "env-svc:http",
+		"DEPHEALTH_ENV_SVC_URL":      "http://env-svc.local",
+		"DEPHEALTH_ENV_SVC_CRITICAL": "yes",
+	})
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// DEPHEALTH_DEPS completely replaces YAML deps.
+	if len(cfg.Dependencies) != 1 {
+		t.Fatalf("Dependencies count = %d, want 1 (env replaces yaml)", len(cfg.Dependencies))
+	}
+	if cfg.Dependencies[0].Name != "env-svc" {
+		t.Errorf("dep[0].Name = %q, want %q", cfg.Dependencies[0].Name, "env-svc")
+	}
+}
+
+func TestLoad_ConfigFile_PerDepAuthOverlayOnYAMLDeps(t *testing.T) {
+	yamlContent := `
+name: yaml-app
+dependencies:
+  - name: api
+    type: http
+    url: "http://api.local"
+    critical: true
+`
+	path := writeTestYAML(t, yamlContent)
+	os.Unsetenv("DEPHEALTH_DEPS")
+	setEnvs(t, map[string]string{
+		"CONFIG_FILE":                path,
+		"DEPHEALTH_API_BEARER_TOKEN": "injected-token",
+	})
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(cfg.Dependencies) != 1 {
+		t.Fatalf("Dependencies count = %d, want 1", len(cfg.Dependencies))
+	}
+	dep := cfg.Dependencies[0]
+	if dep.Name != "api" {
+		t.Errorf("dep.Name = %q, want %q", dep.Name, "api")
+	}
+	if dep.BearerToken != "injected-token" {
+		t.Errorf("dep.BearerToken = %q, want %q (env overlay on yaml dep)", dep.BearerToken, "injected-token")
+	}
+}
+
+func TestLoad_NoConfigFile_Regression(t *testing.T) {
+	// Without CONFIG_FILE, behavior must be identical to v0.4.x.
+	os.Unsetenv("CONFIG_FILE")
+	setEnvs(t, map[string]string{
+		"DEPHEALTH_NAME":         "regression-app",
+		"DEPHEALTH_DEPS":         "svc:http",
+		"DEPHEALTH_SVC_URL":      "http://svc:80",
+		"DEPHEALTH_SVC_CRITICAL": "yes",
+	})
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Name != "regression-app" {
+		t.Errorf("Name = %q, want %q", cfg.Name, "regression-app")
+	}
+	if cfg.ListenAddr != ":8080" {
+		t.Errorf("ListenAddr = %q, want %q (default)", cfg.ListenAddr, ":8080")
+	}
+	if cfg.CheckInterval != 10*time.Second {
+		t.Errorf("CheckInterval = %v, want 10s (default)", cfg.CheckInterval)
+	}
+	if cfg.FetchTimeout != 5*time.Second {
+		t.Errorf("FetchTimeout = %v, want 5s (default)", cfg.FetchTimeout)
+	}
+}
+
+func TestLoad_ConfigFile_NotFound(t *testing.T) {
+	t.Setenv("CONFIG_FILE", "/nonexistent/config.yaml")
+	t.Setenv("DEPHEALTH_NAME", "app")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected error for missing config file")
+	}
+	if !strings.Contains(err.Error(), "config file") {
+		t.Errorf("error should mention config file, got: %v", err)
+	}
+}
+
+func TestLoad_ConfigFile_YAMLDefaults(t *testing.T) {
+	// YAML with only name — defaults should be applied.
+	yamlContent := `
+name: minimal-yaml
+`
+	path := writeTestYAML(t, yamlContent)
+	os.Unsetenv("DEPHEALTH_DEPS")
+	t.Setenv("CONFIG_FILE", path)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.ListenAddr != ":8080" {
+		t.Errorf("ListenAddr = %q, want %q (default)", cfg.ListenAddr, ":8080")
+	}
+	if cfg.Log.Format != "text" {
+		t.Errorf("Log.Format = %q, want %q (default)", cfg.Log.Format, "text")
+	}
+	if cfg.Log.Level != "info" {
+		t.Errorf("Log.Level = %q, want %q (default)", cfg.Log.Level, "info")
+	}
+	if cfg.Log.TimeFormat != "rfc3339nano" {
+		t.Errorf("Log.TimeFormat = %q, want %q (default)", cfg.Log.TimeFormat, "rfc3339nano")
+	}
+	if cfg.CheckInterval != 10*time.Second {
+		t.Errorf("CheckInterval = %v, want 10s (default)", cfg.CheckInterval)
+	}
+	if cfg.FetchTimeout != 5*time.Second {
+		t.Errorf("FetchTimeout = %v, want 5s (default)", cfg.FetchTimeout)
+	}
+}
+
+// --- Phase 3: Server Auth Config Tests ---
+
+func TestResolveZone_GlobalMethod(t *testing.T) {
+	ac := AuthConfig{
+		Method: "bearer",
+		Token:  "my-token",
+	}
+	// Both zones should inherit global.
+	for _, zone := range []string{"status", "metrics"} {
+		za := ac.ResolveZone(zone)
+		if za.Method != "bearer" {
+			t.Errorf("ResolveZone(%q).Method = %q, want %q", zone, za.Method, "bearer")
+		}
+		if za.Token != "my-token" {
+			t.Errorf("ResolveZone(%q).Token = %q, want %q", zone, za.Token, "my-token")
+		}
+	}
+}
+
+func TestResolveZone_ZoneOverride(t *testing.T) {
+	ac := AuthConfig{
+		Method: "bearer",
+		Token:  "global-token",
+		Status: &ZoneAuth{
+			Method:   "basic",
+			Username: "admin",
+			Password: "secret",
+		},
+	}
+	// Status should be overridden.
+	za := ac.ResolveZone("status")
+	if za.Method != "basic" {
+		t.Errorf("status Method = %q, want %q", za.Method, "basic")
+	}
+	if za.Username != "admin" {
+		t.Errorf("status Username = %q, want %q", za.Username, "admin")
+	}
+	if za.Password != "secret" {
+		t.Errorf("status Password = %q, want %q", za.Password, "secret")
+	}
+
+	// Metrics should use global.
+	za = ac.ResolveZone("metrics")
+	if za.Method != "bearer" {
+		t.Errorf("metrics Method = %q, want %q", za.Method, "bearer")
+	}
+	if za.Token != "global-token" {
+		t.Errorf("metrics Token = %q, want %q", za.Token, "global-token")
+	}
+}
+
+func TestResolveZone_NoneOverride(t *testing.T) {
+	ac := AuthConfig{
+		Method: "bearer",
+		Token:  "my-token",
+		Metrics: &ZoneAuth{
+			Method: "none",
+		},
+	}
+	// Status inherits global bearer.
+	za := ac.ResolveZone("status")
+	if za.Method != "bearer" {
+		t.Errorf("status Method = %q, want %q", za.Method, "bearer")
+	}
+	// Metrics overridden to none.
+	za = ac.ResolveZone("metrics")
+	if za.Method != "none" {
+		t.Errorf("metrics Method = %q, want %q", za.Method, "none")
+	}
+}
+
+func TestResolveZone_EmptyMethod_DefaultsNone(t *testing.T) {
+	ac := AuthConfig{}
+	za := ac.ResolveZone("status")
+	if za.Method != "none" {
+		t.Errorf("Method = %q, want %q", za.Method, "none")
+	}
+}
+
+func TestResolveZone_UnknownZone(t *testing.T) {
+	ac := AuthConfig{Method: "bearer", Token: "t"}
+	za := ac.ResolveZone("unknown")
+	if za.Method != "bearer" {
+		t.Errorf("Method = %q, want %q (global fallback)", za.Method, "bearer")
+	}
+}
+
+func TestLoad_ServerAuth_BearerEnv(t *testing.T) {
+	setEnvs(t, map[string]string{
+		"DEPHEALTH_NAME": "test-app",
+		"DEPHEALTH_DEPS": "svc:http",
+		"DEPHEALTH_SVC_URL": "http://svc:8080",
+		"DEPHEALTH_SVC_CRITICAL": "yes",
+		"AUTH_METHOD": "bearer",
+		"AUTH_TOKEN":  "secret-token",
+	})
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Auth.Method != "bearer" {
+		t.Errorf("Auth.Method = %q, want %q", cfg.Auth.Method, "bearer")
+	}
+	if cfg.Auth.Token != "secret-token" {
+		t.Errorf("Auth.Token = %q, want %q", cfg.Auth.Token, "secret-token")
+	}
+}
+
+func TestLoad_ServerAuth_BasicEnv(t *testing.T) {
+	setEnvs(t, map[string]string{
+		"DEPHEALTH_NAME": "test-app",
+		"DEPHEALTH_DEPS": "svc:http",
+		"DEPHEALTH_SVC_URL": "http://svc:8080",
+		"DEPHEALTH_SVC_CRITICAL": "yes",
+		"AUTH_METHOD": "basic",
+		"AUTH_USER":   "admin",
+		"AUTH_PASS":   "password123",
+	})
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Auth.Method != "basic" {
+		t.Errorf("Auth.Method = %q, want %q", cfg.Auth.Method, "basic")
+	}
+	if cfg.Auth.Username != "admin" {
+		t.Errorf("Auth.Username = %q, want %q", cfg.Auth.Username, "admin")
+	}
+	if cfg.Auth.Password != "password123" {
+		t.Errorf("Auth.Password = %q, want %q", cfg.Auth.Password, "password123")
+	}
+}
+
+func TestLoad_ServerAuth_APIKeyEnv(t *testing.T) {
+	setEnvs(t, map[string]string{
+		"DEPHEALTH_NAME": "test-app",
+		"DEPHEALTH_DEPS": "svc:http",
+		"DEPHEALTH_SVC_URL": "http://svc:8080",
+		"DEPHEALTH_SVC_CRITICAL": "yes",
+		"AUTH_METHOD":  "apikey",
+		"AUTH_API_KEY": "my-api-key",
+	})
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Auth.Method != "apikey" {
+		t.Errorf("Auth.Method = %q, want %q", cfg.Auth.Method, "apikey")
+	}
+	if cfg.Auth.APIKey != "my-api-key" {
+		t.Errorf("Auth.APIKey = %q, want %q", cfg.Auth.APIKey, "my-api-key")
+	}
+}
+
+func TestLoad_ServerAuth_PerZoneEnv(t *testing.T) {
+	setEnvs(t, map[string]string{
+		"DEPHEALTH_NAME": "test-app",
+		"DEPHEALTH_DEPS": "svc:http",
+		"DEPHEALTH_SVC_URL": "http://svc:8080",
+		"DEPHEALTH_SVC_CRITICAL": "yes",
+		"AUTH_METHOD":         "bearer",
+		"AUTH_TOKEN":          "global-token",
+		"AUTH_STATUS_METHOD":  "basic",
+		"AUTH_STATUS_USER":    "admin",
+		"AUTH_STATUS_PASS":    "secret",
+		"AUTH_METRICS_METHOD": "none",
+	})
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Status zone should be basic.
+	za := cfg.Auth.ResolveZone("status")
+	if za.Method != "basic" {
+		t.Errorf("status Method = %q, want %q", za.Method, "basic")
+	}
+	if za.Username != "admin" {
+		t.Errorf("status Username = %q, want %q", za.Username, "admin")
+	}
+
+	// Metrics zone should be none (override).
+	za = cfg.Auth.ResolveZone("metrics")
+	if za.Method != "none" {
+		t.Errorf("metrics Method = %q, want %q", za.Method, "none")
+	}
+}
+
+func TestLoad_ServerAuth_TokenFromFile(t *testing.T) {
+	dir := t.TempDir()
+	tokenFile := filepath.Join(dir, "token")
+	os.WriteFile(tokenFile, []byte("file-token\n"), 0644)
+
+	setEnvs(t, map[string]string{
+		"DEPHEALTH_NAME": "test-app",
+		"DEPHEALTH_DEPS": "svc:http",
+		"DEPHEALTH_SVC_URL": "http://svc:8080",
+		"DEPHEALTH_SVC_CRITICAL": "yes",
+		"AUTH_METHOD":     "bearer",
+		"AUTH_TOKEN_FILE": tokenFile,
+	})
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Auth.Token != "file-token" {
+		t.Errorf("Auth.Token = %q, want %q", cfg.Auth.Token, "file-token")
+	}
+}
+
+func TestLoad_ServerAuth_PassFromFile(t *testing.T) {
+	dir := t.TempDir()
+	passFile := filepath.Join(dir, "pass")
+	os.WriteFile(passFile, []byte("file-pass\n"), 0644)
+
+	setEnvs(t, map[string]string{
+		"DEPHEALTH_NAME": "test-app",
+		"DEPHEALTH_DEPS": "svc:http",
+		"DEPHEALTH_SVC_URL": "http://svc:8080",
+		"DEPHEALTH_SVC_CRITICAL": "yes",
+		"AUTH_METHOD":    "basic",
+		"AUTH_USER":      "admin",
+		"AUTH_PASS_FILE": passFile,
+	})
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Auth.Password != "file-pass" {
+		t.Errorf("Auth.Password = %q, want %q", cfg.Auth.Password, "file-pass")
+	}
+}
+
+func TestLoad_ServerAuth_APIKeyFromFile(t *testing.T) {
+	dir := t.TempDir()
+	keyFile := filepath.Join(dir, "apikey")
+	os.WriteFile(keyFile, []byte("file-key\n"), 0644)
+
+	setEnvs(t, map[string]string{
+		"DEPHEALTH_NAME": "test-app",
+		"DEPHEALTH_DEPS": "svc:http",
+		"DEPHEALTH_SVC_URL": "http://svc:8080",
+		"DEPHEALTH_SVC_CRITICAL": "yes",
+		"AUTH_METHOD":       "apikey",
+		"AUTH_API_KEY_FILE": keyFile,
+	})
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Auth.APIKey != "file-key" {
+		t.Errorf("Auth.APIKey = %q, want %q", cfg.Auth.APIKey, "file-key")
+	}
+}
+
+func TestLoad_ServerAuth_BothVarAndFile_Error(t *testing.T) {
+	dir := t.TempDir()
+	tokenFile := filepath.Join(dir, "token")
+	os.WriteFile(tokenFile, []byte("file-token"), 0644)
+
+	setEnvs(t, map[string]string{
+		"DEPHEALTH_NAME": "test-app",
+		"DEPHEALTH_DEPS": "svc:http",
+		"DEPHEALTH_SVC_URL": "http://svc:8080",
+		"DEPHEALTH_SVC_CRITICAL": "yes",
+		"AUTH_METHOD":     "bearer",
+		"AUTH_TOKEN":      "inline-token",
+		"AUTH_TOKEN_FILE": tokenFile,
+	})
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected error when both AUTH_TOKEN and AUTH_TOKEN_FILE are set")
+	}
+}
+
+func TestLoad_ServerAuth_BasicMissingPass_Error(t *testing.T) {
+	setEnvs(t, map[string]string{
+		"DEPHEALTH_NAME": "test-app",
+		"DEPHEALTH_DEPS": "svc:http",
+		"DEPHEALTH_SVC_URL": "http://svc:8080",
+		"DEPHEALTH_SVC_CRITICAL": "yes",
+		"AUTH_METHOD": "basic",
+		"AUTH_USER":   "admin",
+	})
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected error for basic auth without password")
+	}
+}
+
+func TestLoad_ServerAuth_BasicMissingUser_Error(t *testing.T) {
+	setEnvs(t, map[string]string{
+		"DEPHEALTH_NAME": "test-app",
+		"DEPHEALTH_DEPS": "svc:http",
+		"DEPHEALTH_SVC_URL": "http://svc:8080",
+		"DEPHEALTH_SVC_CRITICAL": "yes",
+		"AUTH_METHOD": "basic",
+		"AUTH_PASS":   "secret",
+	})
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected error for basic auth without username")
+	}
+}
+
+func TestLoad_ServerAuth_BearerMissingToken_Error(t *testing.T) {
+	setEnvs(t, map[string]string{
+		"DEPHEALTH_NAME": "test-app",
+		"DEPHEALTH_DEPS": "svc:http",
+		"DEPHEALTH_SVC_URL": "http://svc:8080",
+		"DEPHEALTH_SVC_CRITICAL": "yes",
+		"AUTH_METHOD": "bearer",
+	})
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected error for bearer auth without token")
+	}
+}
+
+func TestLoad_ServerAuth_APIKeyMissing_Error(t *testing.T) {
+	setEnvs(t, map[string]string{
+		"DEPHEALTH_NAME": "test-app",
+		"DEPHEALTH_DEPS": "svc:http",
+		"DEPHEALTH_SVC_URL": "http://svc:8080",
+		"DEPHEALTH_SVC_CRITICAL": "yes",
+		"AUTH_METHOD": "apikey",
+	})
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected error for apikey auth without api_key")
+	}
+}
+
+func TestLoad_ServerAuth_UnknownMethod_Error(t *testing.T) {
+	setEnvs(t, map[string]string{
+		"DEPHEALTH_NAME": "test-app",
+		"DEPHEALTH_DEPS": "svc:http",
+		"DEPHEALTH_SVC_URL": "http://svc:8080",
+		"DEPHEALTH_SVC_CRITICAL": "yes",
+		"AUTH_METHOD": "oauth2",
+	})
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected error for unknown auth method")
+	}
+}
+
+func TestLoad_ServerAuth_NoAuthVars_DefaultNone(t *testing.T) {
+	setEnvs(t, map[string]string{
+		"DEPHEALTH_NAME": "test-app",
+		"DEPHEALTH_DEPS": "svc:http",
+		"DEPHEALTH_SVC_URL": "http://svc:8080",
+		"DEPHEALTH_SVC_CRITICAL": "yes",
+	})
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Auth.Method != "none" {
+		t.Errorf("Auth.Method = %q, want %q (default)", cfg.Auth.Method, "none")
+	}
+}
+
+func TestLoad_ServerAuth_YAMLAuth(t *testing.T) {
+	yamlContent := `
+name: yaml-auth
+auth:
+  method: bearer
+  token: yaml-token
+  status:
+    method: basic
+    username: admin
+    password: secret
+  metrics:
+    method: none
+dependencies:
+  - name: svc
+    type: http
+    url: "http://svc:8080"
+    critical: true
+`
+	path := writeTestYAML(t, yamlContent)
+	t.Setenv("CONFIG_FILE", path)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Auth.Method != "bearer" {
+		t.Errorf("Auth.Method = %q, want %q", cfg.Auth.Method, "bearer")
+	}
+	if cfg.Auth.Token != "yaml-token" {
+		t.Errorf("Auth.Token = %q, want %q", cfg.Auth.Token, "yaml-token")
+	}
+
+	// Status zone: basic.
+	za := cfg.Auth.ResolveZone("status")
+	if za.Method != "basic" {
+		t.Errorf("status Method = %q, want %q", za.Method, "basic")
+	}
+	if za.Username != "admin" {
+		t.Errorf("status Username = %q, want %q", za.Username, "admin")
+	}
+	if za.Password != "secret" {
+		t.Errorf("status Password = %q, want %q", za.Password, "secret")
+	}
+
+	// Metrics zone: none (override).
+	za = cfg.Auth.ResolveZone("metrics")
+	if za.Method != "none" {
+		t.Errorf("metrics Method = %q, want %q", za.Method, "none")
+	}
+}
+
+func TestLoad_ServerAuth_YAMLWithEnvOverride(t *testing.T) {
+	yamlContent := `
+name: yaml-auth
+auth:
+  method: bearer
+  token: yaml-token
+dependencies:
+  - name: svc
+    type: http
+    url: "http://svc:8080"
+    critical: true
+`
+	path := writeTestYAML(t, yamlContent)
+	setEnvs(t, map[string]string{
+		"CONFIG_FILE":        path,
+		"AUTH_STATUS_METHOD": "basic",
+		"AUTH_STATUS_USER":   "env-admin",
+		"AUTH_STATUS_PASS":   "env-secret",
+	})
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Global still bearer from YAML.
+	if cfg.Auth.Method != "bearer" {
+		t.Errorf("Auth.Method = %q, want %q", cfg.Auth.Method, "bearer")
+	}
+
+	// Status should be basic from env override.
+	za := cfg.Auth.ResolveZone("status")
+	if za.Method != "basic" {
+		t.Errorf("status Method = %q, want %q", za.Method, "basic")
+	}
+	if za.Username != "env-admin" {
+		t.Errorf("status Username = %q, want %q", za.Username, "env-admin")
+	}
+
+	// Metrics should fall back to global bearer.
+	za = cfg.Auth.ResolveZone("metrics")
+	if za.Method != "bearer" {
+		t.Errorf("metrics Method = %q, want %q", za.Method, "bearer")
+	}
+}
+
+func TestLoad_ServerAuth_GlobalBearerZoneMetricsNone(t *testing.T) {
+	setEnvs(t, map[string]string{
+		"DEPHEALTH_NAME": "test-app",
+		"DEPHEALTH_DEPS": "svc:http",
+		"DEPHEALTH_SVC_URL": "http://svc:8080",
+		"DEPHEALTH_SVC_CRITICAL": "yes",
+		"AUTH_METHOD":         "bearer",
+		"AUTH_TOKEN":          "my-token",
+		"AUTH_METRICS_METHOD": "none",
+	})
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Status inherits global bearer.
+	za := cfg.Auth.ResolveZone("status")
+	if za.Method != "bearer" {
+		t.Errorf("status Method = %q, want %q", za.Method, "bearer")
+	}
+	if za.Token != "my-token" {
+		t.Errorf("status Token = %q, want %q", za.Token, "my-token")
+	}
+
+	// Metrics overridden to none.
+	za = cfg.Auth.ResolveZone("metrics")
+	if za.Method != "none" {
+		t.Errorf("metrics Method = %q, want %q", za.Method, "none")
+	}
+}
+
+func TestLoad_ServerAuth_PerZoneTokenFromFile(t *testing.T) {
+	dir := t.TempDir()
+	tokenFile := filepath.Join(dir, "status-token")
+	os.WriteFile(tokenFile, []byte("zone-token\n"), 0644)
+
+	setEnvs(t, map[string]string{
+		"DEPHEALTH_NAME": "test-app",
+		"DEPHEALTH_DEPS": "svc:http",
+		"DEPHEALTH_SVC_URL": "http://svc:8080",
+		"DEPHEALTH_SVC_CRITICAL": "yes",
+		"AUTH_STATUS_METHOD":     "bearer",
+		"AUTH_STATUS_TOKEN_FILE": tokenFile,
+	})
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	za := cfg.Auth.ResolveZone("status")
+	if za.Method != "bearer" {
+		t.Errorf("status Method = %q, want %q", za.Method, "bearer")
+	}
+	if za.Token != "zone-token" {
+		t.Errorf("status Token = %q, want %q", za.Token, "zone-token")
+	}
+}
+
+func TestLoad_ServerAuth_YAMLZoneWithEnvOverlay(t *testing.T) {
+	// YAML sets status zone with basic auth.
+	// Env overrides only the password — other fields should stay from YAML.
+	yamlContent := `
+name: yaml-overlay
+auth:
+  method: bearer
+  token: global-token
+  status:
+    method: basic
+    username: yaml-user
+    password: yaml-pass
+  metrics:
+    method: apikey
+    apiKey: yaml-key
+dependencies:
+  - name: svc
+    type: http
+    url: "http://svc:8080"
+    critical: true
+`
+	path := writeTestYAML(t, yamlContent)
+	setEnvs(t, map[string]string{
+		"CONFIG_FILE":         path,
+		"AUTH_STATUS_PASS":    "env-pass",
+		"AUTH_METRICS_METHOD": "bearer",
+		"AUTH_METRICS_TOKEN":  "env-token",
+	})
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Status: method and username from YAML, password from env.
+	za := cfg.Auth.ResolveZone("status")
+	if za.Method != "basic" {
+		t.Errorf("status Method = %q, want %q", za.Method, "basic")
+	}
+	if za.Username != "yaml-user" {
+		t.Errorf("status Username = %q, want %q", za.Username, "yaml-user")
+	}
+	if za.Password != "env-pass" {
+		t.Errorf("status Password = %q, want %q", za.Password, "env-pass")
+	}
+
+	// Metrics: method and token from env, apiKey from YAML stays.
+	za = cfg.Auth.ResolveZone("metrics")
+	if za.Method != "bearer" {
+		t.Errorf("metrics Method = %q, want %q", za.Method, "bearer")
+	}
+	if za.Token != "env-token" {
+		t.Errorf("metrics Token = %q, want %q", za.Token, "env-token")
+	}
+}
+
+func TestLoad_ServerAuth_EnvGlobalOverridesYAMLGlobal(t *testing.T) {
+	yamlContent := `
+name: yaml-global
+auth:
+  method: basic
+  username: yaml-user
+  password: yaml-pass
+dependencies:
+  - name: svc
+    type: http
+    url: "http://svc:8080"
+    critical: true
+`
+	path := writeTestYAML(t, yamlContent)
+	setEnvs(t, map[string]string{
+		"CONFIG_FILE": path,
+		"AUTH_METHOD": "bearer",
+		"AUTH_TOKEN":  "env-token",
+	})
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if cfg.Auth.Method != "bearer" {
+		t.Errorf("Auth.Method = %q, want %q", cfg.Auth.Method, "bearer")
+	}
+	if cfg.Auth.Token != "env-token" {
+		t.Errorf("Auth.Token = %q, want %q", cfg.Auth.Token, "env-token")
+	}
+}

@@ -6,6 +6,7 @@ require (
 	github.com/BigKAA/topologymetrics/sdk-go v0.4.2
 	github.com/go-chi/chi/v5 v5.2.5
 	github.com/prometheus/client_golang v1.23.2
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (

@@ -16,10 +16,77 @@ type Config struct {
 	Name          string
 	ListenAddr    string
 	Log           LogConfig
+	Auth          AuthConfig
 	CheckInterval time.Duration
 	Timeout       time.Duration // global check timeout (0 = SDK default)
 	FetchTimeout  time.Duration // timeout for recursive HTTP fetch (default 5s)
 	Dependencies  []Dependency
+}
+
+// AuthConfig describes server-side (incoming) authentication.
+type AuthConfig struct {
+	// Global defaults (applied to all protected zones).
+	Method   string // "none" | "basic" | "bearer" | "apikey"
+	Username string
+	Password string
+	Token    string
+	APIKey   string
+
+	// Per-zone overrides.
+	Status  *ZoneAuth // override for /
+	Metrics *ZoneAuth // override for /metrics
+}
+
+// ZoneAuth is a per-zone auth override.
+type ZoneAuth struct {
+	Method   string
+	Username string
+	Password string
+	Token    string
+	APIKey   string
+}
+
+// ResolveZone returns the effective auth configuration for a zone.
+// Zone-specific values take priority, then global, then "none".
+func (c *AuthConfig) ResolveZone(zone string) ZoneAuth {
+	var za *ZoneAuth
+	switch zone {
+	case "status":
+		za = c.Status
+	case "metrics":
+		za = c.Metrics
+	}
+
+	result := ZoneAuth{
+		Method:   c.Method,
+		Username: c.Username,
+		Password: c.Password,
+		Token:    c.Token,
+		APIKey:   c.APIKey,
+	}
+
+	if za != nil {
+		if za.Method != "" {
+			result.Method = za.Method
+		}
+		if za.Username != "" {
+			result.Username = za.Username
+		}
+		if za.Password != "" {
+			result.Password = za.Password
+		}
+		if za.Token != "" {
+			result.Token = za.Token
+		}
+		if za.APIKey != "" {
+			result.APIKey = za.APIKey
+		}
+	}
+
+	if result.Method == "" {
+		result.Method = "none"
+	}
+	return result
 }
 
 // LogConfig holds logging configuration parsed from environment variables.
@@ -74,135 +141,224 @@ type Dependency struct {
 	Metadata    map[string]string // gRPC-only: custom metadata
 }
 
-// Load parses configuration from environment variables.
+// Load parses configuration from YAML file (optional) and environment variables.
+// Environment variables always take priority over YAML values.
 //
-// Required:
-//   - DEPHEALTH_NAME — application name
-//   - DEPHEALTH_DEPS — comma-separated "name:type" pairs
-//
-// Optional:
-//   - LISTEN_ADDR (default ":8080")
-//   - DEPHEALTH_CHECK_INTERVAL — seconds (default "10")
-//   - DEPHEALTH_FETCH_TIMEOUT — seconds, timeout for recursive HTTP detail fetch (default "5")
-//
-// Logging:
-//   - LOG_FORMAT — "text" or "json" (default "text")
-//   - LOG_LEVEL — "debug", "info", "warn", "error" (default "info")
-//   - LOG_TIME_FORMAT — "rfc3339", "rfc3339nano", "unix", "unixmilli" (default "rfc3339nano")
-//   - LOG_ADD_SOURCE — "yes"/"no" (default "no")
-//   - LOG_TIME_KEY, LOG_LEVEL_KEY, LOG_MESSAGE_KEY, LOG_SOURCE_KEY — custom JSON key names
-//
-// Per-dependency (NAME is uppercase with hyphens replaced by underscores):
-//   - DEPHEALTH_<NAME>_URL or DEPHEALTH_<NAME>_HOST + DEPHEALTH_<NAME>_PORT
-//   - DEPHEALTH_<NAME>_CRITICAL — "yes" or "no"
-//   - DEPHEALTH_<NAME>_HEALTH_PATH — HTTP health check path
+// Flow: CONFIG_FILE → loadFromYAML → applyEnvOverrides → applyDefaults → validate.
 func Load() (*Config, error) {
-	cfg := &Config{
-		ListenAddr: getEnv("LISTEN_ADDR", ":8080"),
-	}
+	var cfg *Config
 
-	// Log config.
-	logCfg, err := loadLogConfig()
-	if err != nil {
-		return nil, err
-	}
-	cfg.Log = logCfg
-
-	// Application name.
-	cfg.Name = os.Getenv("DEPHEALTH_NAME")
-	if cfg.Name == "" {
-		return nil, fmt.Errorf("DEPHEALTH_NAME is required")
-	}
-
-	// Check interval.
-	intervalStr := getEnv("DEPHEALTH_CHECK_INTERVAL", "10")
-	sec, err := strconv.ParseFloat(intervalStr, 64)
-	if err != nil {
-		return nil, fmt.Errorf("invalid DEPHEALTH_CHECK_INTERVAL %q: %w", intervalStr, err)
-	}
-	cfg.CheckInterval = time.Duration(sec * float64(time.Second))
-
-	// Global timeout (optional).
-	if ts := os.Getenv("DEPHEALTH_TIMEOUT"); ts != "" {
-		tSec, err := strconv.ParseFloat(ts, 64)
+	// Phase 1: Base config from YAML (if provided).
+	if path := os.Getenv("CONFIG_FILE"); path != "" {
+		var err error
+		cfg, err = loadFromYAML(path)
 		if err != nil {
-			return nil, fmt.Errorf("invalid DEPHEALTH_TIMEOUT %q: %w", ts, err)
+			return nil, fmt.Errorf("config file %q: %w", path, err)
 		}
-		cfg.Timeout = time.Duration(tSec * float64(time.Second))
+	} else {
+		cfg = &Config{}
 	}
 
-	// Fetch timeout for recursive HTTP detail requests (default 5s).
-	fetchStr := getEnv("DEPHEALTH_FETCH_TIMEOUT", "5")
-	fetchSec, err := strconv.ParseFloat(fetchStr, 64)
-	if err != nil {
-		return nil, fmt.Errorf("invalid DEPHEALTH_FETCH_TIMEOUT %q: %w", fetchStr, err)
-	}
-	if fetchSec < 0 {
-		return nil, fmt.Errorf("DEPHEALTH_FETCH_TIMEOUT must be non-negative, got %v", fetchSec)
-	}
-	cfg.FetchTimeout = time.Duration(fetchSec * float64(time.Second))
-
-	// Global auth defaults.
-	ga, err := loadGlobalAuth()
-	if err != nil {
+	// Phase 2: Apply env var overrides (env > YAML).
+	if err := applyEnvOverrides(cfg); err != nil {
 		return nil, err
 	}
 
-	// Dependencies (optional — service may have none).
-	depsStr := os.Getenv("DEPHEALTH_DEPS")
-	if depsStr != "" {
-		deps, err := parseDeps(depsStr, ga)
-		if err != nil {
-			return nil, err
-		}
-		cfg.Dependencies = deps
+	// Phase 3: Apply defaults for unset fields.
+	applyDefaults(cfg)
+
+	// Phase 4: Validate.
+	if err := validate(cfg); err != nil {
+		return nil, err
 	}
 
 	return cfg, nil
 }
 
-// loadLogConfig parses LOG_* environment variables into LogConfig.
-func loadLogConfig() (LogConfig, error) {
-	lc := LogConfig{
-		Format:     strings.ToLower(getEnv("LOG_FORMAT", "text")),
-		Level:      strings.ToLower(getEnv("LOG_LEVEL", "info")),
-		TimeFormat: strings.ToLower(getEnv("LOG_TIME_FORMAT", "rfc3339nano")),
-		TimeKey:    os.Getenv("LOG_TIME_KEY"),
-		LevelKey:   os.Getenv("LOG_LEVEL_KEY"),
-		MessageKey: os.Getenv("LOG_MESSAGE_KEY"),
-		SourceKey:  os.Getenv("LOG_SOURCE_KEY"),
+// applyEnvOverrides reads environment variables and overwrites the corresponding
+// Config fields. Fields not set via env vars are left unchanged.
+func applyEnvOverrides(cfg *Config) error {
+	// Listen address.
+	if v := os.Getenv("LISTEN_ADDR"); v != "" {
+		cfg.ListenAddr = v
 	}
 
-	// Validate format.
-	switch lc.Format {
-	case "text", "json":
-	default:
-		return lc, fmt.Errorf("invalid LOG_FORMAT %q (expected text/json)", lc.Format)
+	// Log config overlay.
+	if err := applyLogEnvOverrides(&cfg.Log); err != nil {
+		return err
 	}
 
-	// Validate level.
-	var level slog.Level
-	if err := level.UnmarshalText([]byte(strings.ToUpper(lc.Level))); err != nil {
-		return lc, fmt.Errorf("invalid LOG_LEVEL %q (expected debug/info/warn/error)", lc.Level)
+	// Application name.
+	if v := os.Getenv("DEPHEALTH_NAME"); v != "" {
+		cfg.Name = v
 	}
 
-	// Validate time format.
-	switch lc.TimeFormat {
-	case "rfc3339", "rfc3339nano", "unix", "unixmilli":
-	default:
-		return lc, fmt.Errorf("invalid LOG_TIME_FORMAT %q (expected rfc3339/rfc3339nano/unix/unixmilli)", lc.TimeFormat)
+	// Check interval.
+	if v := os.Getenv("DEPHEALTH_CHECK_INTERVAL"); v != "" {
+		sec, err := strconv.ParseFloat(v, 64)
+		if err != nil {
+			return fmt.Errorf("invalid DEPHEALTH_CHECK_INTERVAL %q: %w", v, err)
+		}
+		cfg.CheckInterval = time.Duration(sec * float64(time.Second))
 	}
 
-	// AddSource (optional).
+	// Global timeout (optional).
+	if v := os.Getenv("DEPHEALTH_TIMEOUT"); v != "" {
+		sec, err := strconv.ParseFloat(v, 64)
+		if err != nil {
+			return fmt.Errorf("invalid DEPHEALTH_TIMEOUT %q: %w", v, err)
+		}
+		cfg.Timeout = time.Duration(sec * float64(time.Second))
+	}
+
+	// Fetch timeout.
+	if v := os.Getenv("DEPHEALTH_FETCH_TIMEOUT"); v != "" {
+		sec, err := strconv.ParseFloat(v, 64)
+		if err != nil {
+			return fmt.Errorf("invalid DEPHEALTH_FETCH_TIMEOUT %q: %w", v, err)
+		}
+		cfg.FetchTimeout = time.Duration(sec * float64(time.Second))
+	}
+
+	// Server-side (incoming) auth.
+	if err := loadServerAuth(cfg); err != nil {
+		return err
+	}
+
+	// Global auth defaults for dependencies.
+	ga, err := loadGlobalAuth()
+	if err != nil {
+		return err
+	}
+
+	// Dependencies: if DEPHEALTH_DEPS is set, it REPLACES any YAML deps entirely.
+	if depsStr := os.Getenv("DEPHEALTH_DEPS"); depsStr != "" {
+		deps, err := parseDeps(depsStr, ga)
+		if err != nil {
+			return err
+		}
+		cfg.Dependencies = deps
+	} else if len(cfg.Dependencies) > 0 {
+		// Apply per-dep auth env var overlays to existing (YAML-loaded) deps.
+		for i := range cfg.Dependencies {
+			prefix := "DEPHEALTH_" + EnvName(cfg.Dependencies[i].Name) + "_"
+			if err := loadDepAuth(&cfg.Dependencies[i], prefix, ga); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+// applyLogEnvOverrides reads LOG_* environment variables and overwrites the
+// corresponding LogConfig fields. Fields not set via env vars are left unchanged.
+func applyLogEnvOverrides(lc *LogConfig) error {
+	if v := os.Getenv("LOG_FORMAT"); v != "" {
+		lc.Format = strings.ToLower(v)
+	}
+	if v := os.Getenv("LOG_LEVEL"); v != "" {
+		lc.Level = strings.ToLower(v)
+	}
+	if v := os.Getenv("LOG_TIME_FORMAT"); v != "" {
+		lc.TimeFormat = strings.ToLower(v)
+	}
 	if v := os.Getenv("LOG_ADD_SOURCE"); v != "" {
 		b, err := parseBool(v)
 		if err != nil {
-			return lc, fmt.Errorf("invalid LOG_ADD_SOURCE: %w", err)
+			return fmt.Errorf("invalid LOG_ADD_SOURCE: %w", err)
 		}
 		lc.AddSource = b
 	}
+	if v := os.Getenv("LOG_TIME_KEY"); v != "" {
+		lc.TimeKey = v
+	}
+	if v := os.Getenv("LOG_LEVEL_KEY"); v != "" {
+		lc.LevelKey = v
+	}
+	if v := os.Getenv("LOG_MESSAGE_KEY"); v != "" {
+		lc.MessageKey = v
+	}
+	if v := os.Getenv("LOG_SOURCE_KEY"); v != "" {
+		lc.SourceKey = v
+	}
+	return nil
+}
 
-	return lc, nil
+// applyDefaults fills in default values for fields not set by YAML or env vars.
+func applyDefaults(cfg *Config) {
+	if cfg.ListenAddr == "" {
+		cfg.ListenAddr = ":8080"
+	}
+	if cfg.Log.Format == "" {
+		cfg.Log.Format = "text"
+	}
+	if cfg.Log.Level == "" {
+		cfg.Log.Level = "info"
+	}
+	if cfg.Log.TimeFormat == "" {
+		cfg.Log.TimeFormat = "rfc3339nano"
+	}
+	if cfg.CheckInterval == 0 {
+		cfg.CheckInterval = 10 * time.Second
+	}
+	if cfg.FetchTimeout == 0 {
+		cfg.FetchTimeout = 5 * time.Second
+	}
+	if cfg.Auth.Method == "" {
+		cfg.Auth.Method = "none"
+	}
+}
+
+// validate checks the Config for correctness after all loading and defaults.
+func validate(cfg *Config) error {
+	if cfg.Name == "" {
+		return fmt.Errorf("DEPHEALTH_NAME is required")
+	}
+
+	if err := validateLogConfig(&cfg.Log); err != nil {
+		return err
+	}
+
+	if cfg.FetchTimeout < 0 {
+		return fmt.Errorf("DEPHEALTH_FETCH_TIMEOUT must be non-negative, got %v", cfg.FetchTimeout)
+	}
+
+	// Validate server-side auth.
+	if err := validateServerAuth(&cfg.Auth); err != nil {
+		return err
+	}
+
+	// Validate dependency auth.
+	for i := range cfg.Dependencies {
+		if err := validateAuth(&cfg.Dependencies[i]); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// validateLogConfig checks that log configuration values are valid.
+func validateLogConfig(lc *LogConfig) error {
+	switch lc.Format {
+	case "text", "json":
+	default:
+		return fmt.Errorf("invalid LOG_FORMAT %q (expected text/json)", lc.Format)
+	}
+
+	var level slog.Level
+	if err := level.UnmarshalText([]byte(strings.ToUpper(lc.Level))); err != nil {
+		return fmt.Errorf("invalid LOG_LEVEL %q (expected debug/info/warn/error)", lc.Level)
+	}
+
+	switch lc.TimeFormat {
+	case "rfc3339", "rfc3339nano", "unix", "unixmilli":
+	default:
+		return fmt.Errorf("invalid LOG_TIME_FORMAT %q (expected rfc3339/rfc3339nano/unix/unixmilli)", lc.TimeFormat)
+	}
+
+	return nil
 }
 
 // globalAuth holds default authentication values parsed from global env vars.
@@ -244,6 +400,132 @@ func loadGlobalAuth() (globalAuth, error) {
 	}
 
 	return ga, nil
+}
+
+// loadServerAuth reads server-side auth from env vars and applies to cfg.Auth.
+func loadServerAuth(cfg *Config) error {
+	// Global auth settings.
+	if v := os.Getenv("AUTH_METHOD"); v != "" {
+		cfg.Auth.Method = v
+	}
+	if v := os.Getenv("AUTH_USER"); v != "" {
+		cfg.Auth.Username = v
+	}
+
+	pass, err := resolveSecret("AUTH_PASS")
+	if err != nil {
+		return err
+	}
+	if pass != "" {
+		cfg.Auth.Password = pass
+	}
+
+	token, err := resolveSecret("AUTH_TOKEN")
+	if err != nil {
+		return err
+	}
+	if token != "" {
+		cfg.Auth.Token = token
+	}
+
+	apiKey, err := resolveSecret("AUTH_API_KEY")
+	if err != nil {
+		return err
+	}
+	if apiKey != "" {
+		cfg.Auth.APIKey = apiKey
+	}
+
+	// Per-zone: status.
+	if err := loadZoneAuth("AUTH_STATUS", &cfg.Auth, "status"); err != nil {
+		return err
+	}
+	// Per-zone: metrics.
+	if err := loadZoneAuth("AUTH_METRICS", &cfg.Auth, "metrics"); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// loadZoneAuth reads per-zone auth env vars and sets the zone override.
+func loadZoneAuth(prefix string, ac *AuthConfig, zone string) error {
+	method := os.Getenv(prefix + "_METHOD")
+	user := os.Getenv(prefix + "_USER")
+
+	pass, err := resolveSecret(prefix + "_PASS")
+	if err != nil {
+		return err
+	}
+
+	token, err := resolveSecret(prefix + "_TOKEN")
+	if err != nil {
+		return err
+	}
+
+	apiKey, err := resolveSecret(prefix + "_API_KEY")
+	if err != nil {
+		return err
+	}
+
+	// Only create zone override if at least one env var is set.
+	if method == "" && user == "" && pass == "" && token == "" && apiKey == "" {
+		return nil
+	}
+
+	za := &ZoneAuth{
+		Method:   method,
+		Username: user,
+		Password: pass,
+		Token:    token,
+		APIKey:   apiKey,
+	}
+
+	switch zone {
+	case "status":
+		if ac.Status == nil {
+			ac.Status = za
+		} else {
+			// Merge: env values override existing YAML values.
+			if za.Method != "" {
+				ac.Status.Method = za.Method
+			}
+			if za.Username != "" {
+				ac.Status.Username = za.Username
+			}
+			if za.Password != "" {
+				ac.Status.Password = za.Password
+			}
+			if za.Token != "" {
+				ac.Status.Token = za.Token
+			}
+			if za.APIKey != "" {
+				ac.Status.APIKey = za.APIKey
+			}
+		}
+	case "metrics":
+		if ac.Metrics == nil {
+			ac.Metrics = za
+		} else {
+			if za.Method != "" {
+				ac.Metrics.Method = za.Method
+			}
+			if za.Username != "" {
+				ac.Metrics.Username = za.Username
+			}
+			if za.Password != "" {
+				ac.Metrics.Password = za.Password
+			}
+			if za.Token != "" {
+				ac.Metrics.Token = za.Token
+			}
+			if za.APIKey != "" {
+				ac.Metrics.APIKey = za.APIKey
+			}
+		}
+	}
+
+	return nil
 }
 
 // resolveSecret resolves a secret value from env var or _FILE variant.
@@ -309,6 +591,32 @@ func validateAuth(dep *Dependency) error {
 		return fmt.Errorf("dependency %q: METADATA is only valid for gRPC dependencies, got type %q", dep.Name, dep.Type)
 	}
 
+	return nil
+}
+
+// validateServerAuth validates the resolved auth config for both zones.
+func validateServerAuth(ac *AuthConfig) error {
+	for _, zone := range []string{"status", "metrics"} {
+		za := ac.ResolveZone(zone)
+		switch za.Method {
+		case "none":
+			// OK — no auth required.
+		case "basic":
+			if za.Username == "" || za.Password == "" {
+				return fmt.Errorf("auth %s: method=basic requires username and password", zone)
+			}
+		case "bearer":
+			if za.Token == "" {
+				return fmt.Errorf("auth %s: method=bearer requires token", zone)
+			}
+		case "apikey":
+			if za.APIKey == "" {
+				return fmt.Errorf("auth %s: method=apikey requires api_key", zone)
+			}
+		default:
+			return fmt.Errorf("auth %s: unsupported method %q", zone, za.Method)
+		}
+	}
 	return nil
 }
 
@@ -540,13 +848,6 @@ func loadDepAuth(dep *Dependency, prefix string, ga globalAuth) error {
 // "uniproxy-02" → "UNIPROXY_02".
 func EnvName(name string) string {
 	return strings.ToUpper(strings.ReplaceAll(name, "-", "_"))
-}
-
-func getEnv(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
 }
 
 // parseBool parses common boolean strings.

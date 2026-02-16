@@ -16,11 +16,12 @@
 
 - Проверка здоровья зависимостей: HTTP, gRPC, PostgreSQL, MySQL, Redis, AMQP, Kafka, TCP
 - Enriched Status API — детальная информация о зависимостях и рекурсивный просмотр цепочек HTTP
-- Конфигурация через переменные окружения (12-factor app)
+- Конфигурация через переменные окружения или YAML-файл (12-factor app)
+- Серверная аутентификация для эндпоинтов статуса и метрик (Basic, Bearer, API Key)
 - Экспорт метрик Prometheus через dephealth SDK
 - Kubernetes-native с Helm chart для инстанс-ориентированного развёртывания
 - Per-dependency настройка интервалов, таймаутов, TLS и др.
-- Аутентификация: Bearer token, Basic Auth, пользовательские HTTP-заголовки и gRPC metadata
+- Аутентификация зависимостей: Bearer token, Basic Auth, пользовательские HTTP-заголовки и gRPC metadata
 - Безопасное управление секретами через суффикс `_FILE` (Kubernetes Secrets / Docker Secrets)
 
 ## Быстрый старт
@@ -29,7 +30,7 @@
 
 ```bash
 # Сборка образа
-docker build -t uniproxy:0.4.1 .
+docker build -t uniproxy:0.5.0 .
 
 # Запуск с HTTP-зависимостью
 docker run -p 8080:8080 \
@@ -37,7 +38,7 @@ docker run -p 8080:8080 \
   -e DEPHEALTH_DEPS="httpbin:http" \
   -e DEPHEALTH_HTTPBIN_URL="http://httpbin.org" \
   -e DEPHEALTH_HTTPBIN_CRITICAL=yes \
-  uniproxy:0.4.1
+  uniproxy:0.5.0
 ```
 
 ### Проверка эндпоинтов
@@ -70,12 +71,68 @@ helm install uniproxy-01 ./deploy/helm/uniproxy \
 
 ## Конфигурация
 
-Вся конфигурация выполняется через переменные окружения.
+uniproxy поддерживает два метода конфигурации:
+
+1. **Переменные окружения** — традиционный 12-factor подход (работает всегда)
+2. **YAML-файл конфигурации** — структурированный конфиг с переопределением через env vars
+
+Переменные окружения всегда имеют приоритет над значениями из YAML.
+
+### Конфигурация через YAML
+
+Укажите переменную `CONFIG_FILE` с путём к YAML-файлу:
+
+```bash
+docker run -p 8080:8080 \
+  -e CONFIG_FILE=/config/config.yaml \
+  -v ./config.yaml:/config/config.yaml:ro \
+  uniproxy:0.5.0
+```
+
+Пример YAML-файла:
+
+```yaml
+name: my-proxy
+listenAddr: ":8080"
+checkInterval: "15s"
+fetchTimeout: "3s"
+
+log:
+  format: json
+  level: info
+
+auth:
+  method: bearer
+  token: "my-secret-token"
+  metrics:
+    method: none
+
+dependencies:
+  - name: backend
+    type: http
+    url: "http://backend.svc:8080"
+    critical: true
+    healthPath: "/"
+  - name: cache
+    type: redis
+    host: redis.svc
+    port: "6379"
+    critical: false
+```
+
+Полный пример: [examples/config.yaml](./examples/config.yaml).
+
+**Правила приоритетов:**
+- `CONFIG_FILE` env var → загрузка YAML как базовый конфиг
+- Переменные окружения → переопределяют значения из YAML
+- `DEPHEALTH_DEPS` env var → **заменяет** все зависимости из YAML (без слияния)
+- Per-dependency env vars → overlay на существующие (загруженные из YAML) зависимости
 
 ### Глобальные переменные
 
 | Переменная | Обязательная | По умолчанию | Описание |
 |------------|:------------:|:------------:|----------|
+| `CONFIG_FILE` | Нет | — | Путь к YAML-файлу конфигурации |
 | `DEPHEALTH_NAME` | Да | — | Имя приложения (используется в метриках и ответах) |
 | `DEPHEALTH_DEPS` | Нет | — | Список зависимостей через запятую: `имя1:тип1,имя2:тип2` |
 | `LISTEN_ADDR` | Нет | `:8080` | Адрес HTTP-сервера |
@@ -115,11 +172,77 @@ helm install uniproxy-01 ./deploy/helm/uniproxy \
 
 *Требуется либо `URL`, либо `HOST` + `PORT`.
 
-### Аутентификация
+### Серверная аутентификация
+
+uniproxy поддерживает серверную аутентификацию для защиты собственных эндпоинтов. Аутентификация настраивается по зонам — API статуса (`/`) и метрики Prometheus (`/metrics`) могут иметь независимые настройки. Пробы (`/healthz`, `/readyz`) всегда открыты.
+
+#### Методы серверной аутентификации
+
+| Метод | Описание |
+|-------|----------|
+| `none` | Без аутентификации (по умолчанию) |
+| `basic` | HTTP Basic Auth (`Authorization: Basic <base64>`) |
+| `bearer` | Bearer token (`Authorization: Bearer <token>`) |
+| `apikey` | API-ключ через заголовок `X-API-Key` |
+
+#### Переменные серверной аутентификации
+
+| Переменная | Описание |
+|------------|----------|
+| `AUTH_METHOD` | Глобальный метод: `none`, `basic`, `bearer`, `apikey` |
+| `AUTH_USER` | Логин Basic Auth |
+| `AUTH_PASS` | Пароль Basic Auth |
+| `AUTH_PASS_FILE` | Чтение пароля из файла |
+| `AUTH_TOKEN` | Bearer token |
+| `AUTH_TOKEN_FILE` | Чтение токена из файла |
+| `AUTH_API_KEY` | API-ключ |
+| `AUTH_API_KEY_FILE` | Чтение API-ключа из файла |
+
+#### Переопределения по зонам
+
+Каждая зона (`status`, `metrics`) может переопределить глобальные настройки:
+
+| Переменная | Описание |
+|------------|----------|
+| `AUTH_STATUS_METHOD` | Метод для эндпоинта `/` |
+| `AUTH_STATUS_USER` | Логин для `/` |
+| `AUTH_STATUS_PASS` | Пароль для `/` |
+| `AUTH_STATUS_TOKEN` | Токен для `/` |
+| `AUTH_STATUS_API_KEY` | API-ключ для `/` |
+| `AUTH_METRICS_METHOD` | Метод для `/metrics` |
+| `AUTH_METRICS_USER` | Логин для `/metrics` |
+| `AUTH_METRICS_PASS` | Пароль для `/metrics` |
+| `AUTH_METRICS_TOKEN` | Токен для `/metrics` |
+| `AUTH_METRICS_API_KEY` | API-ключ для `/metrics` |
+
+Все переменные `_PASS`, `_TOKEN` и `_API_KEY` поддерживают суффикс `_FILE`.
+
+#### Примеры серверной аутентификации
+
+```bash
+# Защитить API статуса bearer-токеном, метрики оставить открытыми
+docker run -p 8080:8080 \
+  -e DEPHEALTH_NAME=my-proxy \
+  -e DEPHEALTH_DEPS="httpbin:http" \
+  -e DEPHEALTH_HTTPBIN_URL="http://httpbin.org" \
+  -e DEPHEALTH_HTTPBIN_CRITICAL=yes \
+  -e AUTH_METHOD=bearer \
+  -e AUTH_TOKEN=my-secret-token \
+  -e AUTH_METRICS_METHOD=none \
+  uniproxy:0.5.0
+
+# Проверка доступа
+curl http://localhost:8080/                                        # 401
+curl -H "Authorization: Bearer my-secret-token" http://localhost:8080/  # 200
+curl http://localhost:8080/metrics                                 # 200 (override: none)
+curl http://localhost:8080/healthz                                 # 200 (всегда открыт)
+```
+
+### Аутентификация зависимостей
 
 uniproxy поддерживает аутентификацию для HTTP и gRPC зависимостей. Auth можно настроить глобально или для каждой зависимости; per-dependency настройки полностью переопределяют глобальные.
 
-#### Методы аутентификации
+#### Методы аутентификации зависимостей
 
 | Метод | HTTP | gRPC | Описание |
 |-------|:----:|:----:|----------|
@@ -193,7 +316,7 @@ docker run -p 8080:8080 \
   -e DEPHEALTH_GRPC_SVC_CRITICAL=yes \
   -e DEPHEALTH_GRPC_SVC_BASIC_USER=admin \
   -e DEPHEALTH_GRPC_SVC_BASIC_PASS=secret \
-  uniproxy:0.4.2
+  uniproxy:0.5.0
 ```
 
 ### Поддерживаемые типы зависимостей
@@ -216,7 +339,7 @@ docker run -p 8080:8080 \
   -e DEPHEALTH_CACHE_CRITICAL=no \
   -e DEPHEALTH_DB_URL="postgres://user:pass@pg.svc:5432/mydb" \
   -e DEPHEALTH_DB_CRITICAL=yes \
-  uniproxy:0.4.1
+  uniproxy:0.5.0
 ```
 
 ## API-эндпоинты
@@ -333,22 +456,30 @@ dephealth SDK экспортирует следующие метрики Prometh
 uniproxy/
 ├── main.go                      # Точка входа, инициализация SDK
 ├── internal/
+│   ├── auth/
+│   │   ├── middleware.go        # Серверная аутентификация (Basic/Bearer/APIKey)
+│   │   └── middleware_test.go   # Тесты middleware
 │   ├── config/
-│   │   ├── config.go            # Парсинг переменных окружения
-│   │   └── config_test.go       # Тесты конфигурации
+│   │   ├── config.go            # Парсинг env vars + YAML конфигурации
+│   │   ├── config_test.go       # Тесты конфигурации
+│   │   ├── yaml.go              # YAML-структуры и парсер
+│   │   └── yaml_test.go         # Тесты YAML-парсинга
+│   ├── logging/
+│   │   └── logging.go           # Настройка структурированного логирования
 │   └── server/
 │       ├── server.go            # HTTP-обработчики, типы
-│       ├── server_test.go       # Тесты сервера (20 тестов)
+│       ├── server_test.go       # Тесты сервера
 │       ├── fetch.go             # Рекурсивный HTTP fetch
 │       └── fetch_test.go        # Тесты fetch
 ├── deploy/
 │   └── helm/
 │       └── uniproxy/
-│           ├── Chart.yaml       # Метаданные чарта (v0.4.1)
+│           ├── Chart.yaml       # Метаданные чарта (v0.5.0)
 │           ├── values.yaml      # Значения по умолчанию
 │           ├── templates/       # Шаблоны манифестов K8s
 │           └── instances/       # Конфигурации экземпляров
-├── plans/                       # Планы разработки
+├── examples/
+│   └── config.yaml              # Полный пример YAML-конфигурации
 ├── Dockerfile                   # Многоэтапная сборка Docker
 ├── go.mod
 ├── LICENSE
@@ -385,6 +516,19 @@ helm template uniproxy-01 ./deploy/helm/uniproxy \
 | `checkInterval` | `"10"` | Интервал проверки (секунды) |
 | `timeout` | `""` | Глобальный таймаут проверки (секунды) |
 | `fetchTimeout` | `"5"` | Таймаут рекурсивного HTTP fetch (секунды) |
+| `serverAuth.method` | `"none"` | Метод серверной auth: `none`, `basic`, `bearer`, `apikey` |
+| `serverAuth.username` | — | Логин Basic Auth |
+| `serverAuth.password` | — | Пароль Basic Auth |
+| `serverAuth.token` | — | Bearer token |
+| `serverAuth.apiKey` | — | API-ключ |
+| `serverAuth.existingSecret` | — | K8s Secret для учётных данных |
+| `serverAuth.tokenKey` | — | Ключ в Secret для токена |
+| `serverAuth.passwordKey` | — | Ключ в Secret для пароля |
+| `serverAuth.apiKeyKey` | — | Ключ в Secret для API-ключа |
+| `serverAuth.status` | — | Переопределение для эндпоинта `/` |
+| `serverAuth.metrics` | — | Переопределение для эндпоинта `/metrics` |
+| `configFile.enabled` | `false` | Включить YAML-конфиг через ConfigMap |
+| `configFile.content` | — | Содержимое YAML-конфига (монтируется как `/config/config.yaml`) |
 
 ## Тестирование
 

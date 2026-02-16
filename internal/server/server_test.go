@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/BigKAA/topologymetrics/sdk-go/dephealth"
+
+	"github.com/BigKAA/uniproxy/internal/config"
 )
 
 // mockHealthChecker implements HealthChecker for testing.
@@ -27,7 +29,7 @@ func (m *mockHealthChecker) HealthDetails() map[string]dephealth.EndpointStatus 
 func boolPtr(b bool) *bool { return &b }
 
 func newTestServer(mock *mockHealthChecker) *Server {
-	return New(mock, "test-app", 5*time.Second)
+	return New(mock, "test-app", 5*time.Second, config.AuthConfig{})
 }
 
 func TestHandleRoot_SimpleFormat(t *testing.T) {
@@ -395,5 +397,207 @@ func TestHandleRoot_DetailFormat_UnknownState(t *testing.T) {
 	}
 	if dep.Status != dephealth.StatusUnknown {
 		t.Errorf("Status = %q, want %q", dep.Status, dephealth.StatusUnknown)
+	}
+}
+
+// --- Auth Integration Tests ---
+
+func newTestServerWithAuth(mock *mockHealthChecker, authCfg config.AuthConfig) *Server {
+	return New(mock, "test-app", 5*time.Second, authCfg)
+}
+
+func defaultMock() *mockHealthChecker {
+	return &mockHealthChecker{
+		health: map[string]bool{"svc:host:80": true},
+	}
+}
+
+func TestAuth_None_AllEndpointsOpen(t *testing.T) {
+	srv := newTestServerWithAuth(defaultMock(), config.AuthConfig{})
+
+	for _, path := range []string{"/", "/healthz", "/readyz", "/metrics"} {
+		rr := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rr, httptest.NewRequest("GET", path, nil))
+		if rr.Code != http.StatusOK {
+			t.Errorf("%s: status = %d, want %d", path, rr.Code, http.StatusOK)
+		}
+	}
+}
+
+func TestAuth_BearerOnStatus(t *testing.T) {
+	srv := newTestServerWithAuth(defaultMock(), config.AuthConfig{
+		Status: &config.ZoneAuth{
+			Method: "bearer",
+			Token:  "secret-token",
+		},
+	})
+
+	// / without token → 401.
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, httptest.NewRequest("GET", "/", nil))
+	if rr.Code != http.StatusUnauthorized {
+		t.Errorf("/ no auth: status = %d, want %d", rr.Code, http.StatusUnauthorized)
+	}
+
+	// / with correct token → 200.
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Header.Set("Authorization", "Bearer secret-token")
+	rr = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Errorf("/ with token: status = %d, want %d", rr.Code, http.StatusOK)
+	}
+
+	// /metrics should be open.
+	rr = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, httptest.NewRequest("GET", "/metrics", nil))
+	if rr.Code != http.StatusOK {
+		t.Errorf("/metrics: status = %d, want %d", rr.Code, http.StatusOK)
+	}
+
+	// /healthz should be open.
+	rr = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, httptest.NewRequest("GET", "/healthz", nil))
+	if rr.Code != http.StatusOK {
+		t.Errorf("/healthz: status = %d, want %d", rr.Code, http.StatusOK)
+	}
+}
+
+func TestAuth_BasicOnMetrics(t *testing.T) {
+	srv := newTestServerWithAuth(defaultMock(), config.AuthConfig{
+		Metrics: &config.ZoneAuth{
+			Method:   "basic",
+			Username: "admin",
+			Password: "secret",
+		},
+	})
+
+	// /metrics without auth → 401.
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, httptest.NewRequest("GET", "/metrics", nil))
+	if rr.Code != http.StatusUnauthorized {
+		t.Errorf("/metrics no auth: status = %d, want %d", rr.Code, http.StatusUnauthorized)
+	}
+
+	// /metrics with correct basic auth → 200.
+	req := httptest.NewRequest("GET", "/metrics", nil)
+	req.SetBasicAuth("admin", "secret")
+	rr = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Errorf("/metrics with auth: status = %d, want %d", rr.Code, http.StatusOK)
+	}
+
+	// / should be open.
+	rr = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, httptest.NewRequest("GET", "/", nil))
+	if rr.Code != http.StatusOK {
+		t.Errorf("/: status = %d, want %d", rr.Code, http.StatusOK)
+	}
+
+	// /readyz should be open.
+	rr = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, httptest.NewRequest("GET", "/readyz", nil))
+	if rr.Code != http.StatusOK {
+		t.Errorf("/readyz: status = %d, want %d", rr.Code, http.StatusOK)
+	}
+}
+
+func TestAuth_GlobalBearer(t *testing.T) {
+	srv := newTestServerWithAuth(defaultMock(), config.AuthConfig{
+		Method: "bearer",
+		Token:  "global-token",
+	})
+
+	// / without token → 401.
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, httptest.NewRequest("GET", "/", nil))
+	if rr.Code != http.StatusUnauthorized {
+		t.Errorf("/ no auth: status = %d, want %d", rr.Code, http.StatusUnauthorized)
+	}
+
+	// /metrics without token → 401.
+	rr = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, httptest.NewRequest("GET", "/metrics", nil))
+	if rr.Code != http.StatusUnauthorized {
+		t.Errorf("/metrics no auth: status = %d, want %d", rr.Code, http.StatusUnauthorized)
+	}
+
+	// Both with token → 200.
+	for _, path := range []string{"/", "/metrics"} {
+		req := httptest.NewRequest("GET", path, nil)
+		req.Header.Set("Authorization", "Bearer global-token")
+		rr = httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Errorf("%s with token: status = %d, want %d", path, rr.Code, http.StatusOK)
+		}
+	}
+
+	// Probes always open.
+	for _, path := range []string{"/healthz", "/readyz"} {
+		rr = httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rr, httptest.NewRequest("GET", path, nil))
+		if rr.Code != http.StatusOK {
+			t.Errorf("%s: status = %d, want %d", path, rr.Code, http.StatusOK)
+		}
+	}
+}
+
+func TestAuth_GlobalBearerMetricsOverrideNone(t *testing.T) {
+	srv := newTestServerWithAuth(defaultMock(), config.AuthConfig{
+		Method: "bearer",
+		Token:  "my-token",
+		Metrics: &config.ZoneAuth{
+			Method: "none",
+		},
+	})
+
+	// / without token → 401.
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, httptest.NewRequest("GET", "/", nil))
+	if rr.Code != http.StatusUnauthorized {
+		t.Errorf("/ no auth: status = %d, want %d", rr.Code, http.StatusUnauthorized)
+	}
+
+	// / with token → 200.
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Header.Set("Authorization", "Bearer my-token")
+	rr = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Errorf("/ with token: status = %d, want %d", rr.Code, http.StatusOK)
+	}
+
+	// /metrics open (override none).
+	rr = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, httptest.NewRequest("GET", "/metrics", nil))
+	if rr.Code != http.StatusOK {
+		t.Errorf("/metrics: status = %d, want %d", rr.Code, http.StatusOK)
+	}
+}
+
+func TestAuth_APIKeyOnStatus(t *testing.T) {
+	srv := newTestServerWithAuth(defaultMock(), config.AuthConfig{
+		Status: &config.ZoneAuth{
+			Method: "apikey",
+			APIKey: "my-key",
+		},
+	})
+
+	// / without key → 401.
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, httptest.NewRequest("GET", "/", nil))
+	if rr.Code != http.StatusUnauthorized {
+		t.Errorf("/ no key: status = %d, want %d", rr.Code, http.StatusUnauthorized)
+	}
+
+	// / with correct key → 200.
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Header.Set("X-API-Key", "my-key")
+	rr = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Errorf("/ with key: status = %d, want %d", rr.Code, http.StatusOK)
 	}
 }
