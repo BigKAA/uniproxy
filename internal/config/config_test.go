@@ -1265,3 +1265,240 @@ func TestEnvName(t *testing.T) {
 		}
 	}
 }
+
+// --- YAML + Env merge tests (Phase 2.5) ---
+
+func TestLoad_ConfigFile_FullYAML(t *testing.T) {
+	yamlContent := `
+name: yaml-app
+listenAddr: ":9090"
+log:
+  format: json
+  level: debug
+  timeFormat: unix
+checkInterval: "30s"
+fetchTimeout: "10"
+dependencies:
+  - name: httpbin
+    type: http
+    url: "http://httpbin.org"
+    critical: true
+`
+	path := writeTestYAML(t, yamlContent)
+	t.Setenv("CONFIG_FILE", path)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Name != "yaml-app" {
+		t.Errorf("Name = %q, want %q", cfg.Name, "yaml-app")
+	}
+	if cfg.ListenAddr != ":9090" {
+		t.Errorf("ListenAddr = %q, want %q", cfg.ListenAddr, ":9090")
+	}
+	if cfg.Log.Format != "json" {
+		t.Errorf("Log.Format = %q, want %q", cfg.Log.Format, "json")
+	}
+	if cfg.Log.Level != "debug" {
+		t.Errorf("Log.Level = %q, want %q", cfg.Log.Level, "debug")
+	}
+	if cfg.Log.TimeFormat != "unix" {
+		t.Errorf("Log.TimeFormat = %q, want %q", cfg.Log.TimeFormat, "unix")
+	}
+	if cfg.CheckInterval != 30*time.Second {
+		t.Errorf("CheckInterval = %v, want 30s", cfg.CheckInterval)
+	}
+	if cfg.FetchTimeout != 10*time.Second {
+		t.Errorf("FetchTimeout = %v, want 10s", cfg.FetchTimeout)
+	}
+	if len(cfg.Dependencies) != 1 {
+		t.Fatalf("Dependencies count = %d, want 1", len(cfg.Dependencies))
+	}
+	dep := cfg.Dependencies[0]
+	if dep.Name != "httpbin" || dep.Type != "http" || dep.URL != "http://httpbin.org" || !dep.Critical {
+		t.Errorf("dep = %+v", dep)
+	}
+}
+
+func TestLoad_ConfigFile_EnvOverridesYAML(t *testing.T) {
+	yamlContent := `
+name: yaml-name
+listenAddr: ":9090"
+log:
+  format: text
+  level: info
+checkInterval: "30s"
+`
+	path := writeTestYAML(t, yamlContent)
+	setEnvs(t, map[string]string{
+		"CONFIG_FILE":            path,
+		"DEPHEALTH_NAME":        "env-name",
+		"LISTEN_ADDR":           ":7070",
+		"LOG_FORMAT":            "json",
+		"LOG_LEVEL":             "warn",
+		"DEPHEALTH_CHECK_INTERVAL": "60",
+	})
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Env overrides YAML.
+	if cfg.Name != "env-name" {
+		t.Errorf("Name = %q, want %q (env override)", cfg.Name, "env-name")
+	}
+	if cfg.ListenAddr != ":7070" {
+		t.Errorf("ListenAddr = %q, want %q (env override)", cfg.ListenAddr, ":7070")
+	}
+	if cfg.Log.Format != "json" {
+		t.Errorf("Log.Format = %q, want %q (env override)", cfg.Log.Format, "json")
+	}
+	if cfg.Log.Level != "warn" {
+		t.Errorf("Log.Level = %q, want %q (env override)", cfg.Log.Level, "warn")
+	}
+	if cfg.CheckInterval != 60*time.Second {
+		t.Errorf("CheckInterval = %v, want 60s (env override)", cfg.CheckInterval)
+	}
+}
+
+func TestLoad_ConfigFile_EnvDepsReplaceYAMLDeps(t *testing.T) {
+	yamlContent := `
+name: yaml-app
+dependencies:
+  - name: yaml-svc
+    type: http
+    url: "http://yaml-svc.local"
+    critical: true
+  - name: yaml-redis
+    type: redis
+    host: "redis.local"
+    port: "6379"
+    critical: false
+`
+	path := writeTestYAML(t, yamlContent)
+	setEnvs(t, map[string]string{
+		"CONFIG_FILE":            path,
+		"DEPHEALTH_DEPS":        "env-svc:http",
+		"DEPHEALTH_ENV_SVC_URL":      "http://env-svc.local",
+		"DEPHEALTH_ENV_SVC_CRITICAL": "yes",
+	})
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// DEPHEALTH_DEPS completely replaces YAML deps.
+	if len(cfg.Dependencies) != 1 {
+		t.Fatalf("Dependencies count = %d, want 1 (env replaces yaml)", len(cfg.Dependencies))
+	}
+	if cfg.Dependencies[0].Name != "env-svc" {
+		t.Errorf("dep[0].Name = %q, want %q", cfg.Dependencies[0].Name, "env-svc")
+	}
+}
+
+func TestLoad_ConfigFile_PerDepAuthOverlayOnYAMLDeps(t *testing.T) {
+	yamlContent := `
+name: yaml-app
+dependencies:
+  - name: api
+    type: http
+    url: "http://api.local"
+    critical: true
+`
+	path := writeTestYAML(t, yamlContent)
+	os.Unsetenv("DEPHEALTH_DEPS")
+	setEnvs(t, map[string]string{
+		"CONFIG_FILE":                path,
+		"DEPHEALTH_API_BEARER_TOKEN": "injected-token",
+	})
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(cfg.Dependencies) != 1 {
+		t.Fatalf("Dependencies count = %d, want 1", len(cfg.Dependencies))
+	}
+	dep := cfg.Dependencies[0]
+	if dep.Name != "api" {
+		t.Errorf("dep.Name = %q, want %q", dep.Name, "api")
+	}
+	if dep.BearerToken != "injected-token" {
+		t.Errorf("dep.BearerToken = %q, want %q (env overlay on yaml dep)", dep.BearerToken, "injected-token")
+	}
+}
+
+func TestLoad_NoConfigFile_Regression(t *testing.T) {
+	// Without CONFIG_FILE, behavior must be identical to v0.4.x.
+	os.Unsetenv("CONFIG_FILE")
+	setEnvs(t, map[string]string{
+		"DEPHEALTH_NAME":         "regression-app",
+		"DEPHEALTH_DEPS":         "svc:http",
+		"DEPHEALTH_SVC_URL":      "http://svc:80",
+		"DEPHEALTH_SVC_CRITICAL": "yes",
+	})
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Name != "regression-app" {
+		t.Errorf("Name = %q, want %q", cfg.Name, "regression-app")
+	}
+	if cfg.ListenAddr != ":8080" {
+		t.Errorf("ListenAddr = %q, want %q (default)", cfg.ListenAddr, ":8080")
+	}
+	if cfg.CheckInterval != 10*time.Second {
+		t.Errorf("CheckInterval = %v, want 10s (default)", cfg.CheckInterval)
+	}
+	if cfg.FetchTimeout != 5*time.Second {
+		t.Errorf("FetchTimeout = %v, want 5s (default)", cfg.FetchTimeout)
+	}
+}
+
+func TestLoad_ConfigFile_NotFound(t *testing.T) {
+	t.Setenv("CONFIG_FILE", "/nonexistent/config.yaml")
+	t.Setenv("DEPHEALTH_NAME", "app")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected error for missing config file")
+	}
+	if !strings.Contains(err.Error(), "config file") {
+		t.Errorf("error should mention config file, got: %v", err)
+	}
+}
+
+func TestLoad_ConfigFile_YAMLDefaults(t *testing.T) {
+	// YAML with only name — defaults should be applied.
+	yamlContent := `
+name: minimal-yaml
+`
+	path := writeTestYAML(t, yamlContent)
+	os.Unsetenv("DEPHEALTH_DEPS")
+	t.Setenv("CONFIG_FILE", path)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.ListenAddr != ":8080" {
+		t.Errorf("ListenAddr = %q, want %q (default)", cfg.ListenAddr, ":8080")
+	}
+	if cfg.Log.Format != "text" {
+		t.Errorf("Log.Format = %q, want %q (default)", cfg.Log.Format, "text")
+	}
+	if cfg.Log.Level != "info" {
+		t.Errorf("Log.Level = %q, want %q (default)", cfg.Log.Level, "info")
+	}
+	if cfg.Log.TimeFormat != "rfc3339nano" {
+		t.Errorf("Log.TimeFormat = %q, want %q (default)", cfg.Log.TimeFormat, "rfc3339nano")
+	}
+	if cfg.CheckInterval != 10*time.Second {
+		t.Errorf("CheckInterval = %v, want 10s (default)", cfg.CheckInterval)
+	}
+	if cfg.FetchTimeout != 5*time.Second {
+		t.Errorf("FetchTimeout = %v, want 5s (default)", cfg.FetchTimeout)
+	}
+}
