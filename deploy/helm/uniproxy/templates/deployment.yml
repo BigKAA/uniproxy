@@ -106,6 +106,51 @@ spec:
             - name: {{ $envPrefix }}_AMQP_URL
               value: {{ .amqpURL | quote }}
             {{- end }}
+            {{- /* Authentication: inline values */}}
+            {{- if .bearerToken }}
+            - name: {{ $envPrefix }}_BEARER_TOKEN
+              value: {{ .bearerToken | quote }}
+            {{- end }}
+            {{- if .basicUser }}
+            - name: {{ $envPrefix }}_BASIC_USER
+              value: {{ .basicUser | quote }}
+            {{- end }}
+            {{- if .basicPass }}
+            - name: {{ $envPrefix }}_BASIC_PASS
+              value: {{ .basicPass | quote }}
+            {{- end }}
+            {{- if .headers }}
+            - name: {{ $envPrefix }}_HEADERS
+              value: {{ .headers | quote }}
+            {{- end }}
+            {{- if .metadata }}
+            - name: {{ $envPrefix }}_METADATA
+              value: {{ .metadata | quote }}
+            {{- end }}
+            {{- /* Authentication: from Kubernetes Secret */}}
+            {{- if .auth }}
+            {{- if and .auth.existingSecret .auth.bearerTokenKey }}
+            - name: {{ $envPrefix }}_BEARER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .auth.existingSecret }}
+                  key: {{ .auth.bearerTokenKey }}
+            {{- end }}
+            {{- if and .auth.existingSecret .auth.basicUserKey }}
+            - name: {{ $envPrefix }}_BASIC_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .auth.existingSecret }}
+                  key: {{ .auth.basicUserKey }}
+            {{- end }}
+            {{- if and .auth.existingSecret .auth.basicPassKey }}
+            - name: {{ $envPrefix }}_BASIC_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .auth.existingSecret }}
+                  key: {{ .auth.basicPassKey }}
+            {{- end }}
+            {{- end }}
             {{- end }}
             {{- end }}
             - name: POD_NAME

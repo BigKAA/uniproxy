@@ -134,6 +134,15 @@ func buildDependencyOption(dep config.Dependency) (dephealth.Option, error) {
 		if dep.TLSSkipVerify != nil {
 			depOpts = append(depOpts, dephealth.WithHTTPTLSSkipVerify(*dep.TLSSkipVerify))
 		}
+		if dep.BearerToken != "" {
+			depOpts = append(depOpts, dephealth.WithHTTPBearerToken(dep.BearerToken))
+		}
+		if dep.BasicUser != "" {
+			depOpts = append(depOpts, dephealth.WithHTTPBasicAuth(dep.BasicUser, dep.BasicPass))
+		}
+		if len(dep.Headers) > 0 {
+			depOpts = append(depOpts, dephealth.WithHTTPHeaders(dep.Headers))
+		}
 	case "grpc":
 		if dep.GRPCServiceName != "" {
 			depOpts = append(depOpts, dephealth.WithGRPCServiceName(dep.GRPCServiceName))
@@ -143,6 +152,15 @@ func buildDependencyOption(dep config.Dependency) (dephealth.Option, error) {
 		}
 		if dep.TLSSkipVerify != nil {
 			depOpts = append(depOpts, dephealth.WithGRPCTLSSkipVerify(*dep.TLSSkipVerify))
+		}
+		if dep.BearerToken != "" {
+			depOpts = append(depOpts, dephealth.WithGRPCBearerToken(dep.BearerToken))
+		}
+		if dep.BasicUser != "" {
+			depOpts = append(depOpts, dephealth.WithGRPCBasicAuth(dep.BasicUser, dep.BasicPass))
+		}
+		if len(dep.Metadata) > 0 {
+			depOpts = append(depOpts, dephealth.WithGRPCMetadata(dep.Metadata))
 		}
 	case "postgres":
 		if dep.PostgresQuery != "" {

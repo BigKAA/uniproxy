@@ -1,7 +1,7 @@
 # uniproxy
 
 [![Go Version](https://img.shields.io/badge/go-1.25-00ADD8.svg)](https://golang.org/)
-[![dephealth SDK](https://img.shields.io/badge/dephealth_SDK-v0.4.1-blue.svg)](https://github.com/BigKAA/topologymetrics)
+[![dephealth SDK](https://img.shields.io/badge/dephealth_SDK-v0.4.2-blue.svg)](https://github.com/BigKAA/topologymetrics)
 [![License](https://img.shields.io/badge/license-Apache%202.0-green.svg)](./LICENSE)
 
 **Universal test proxy for dependency health monitoring with dephealth SDK**
@@ -20,6 +20,8 @@
 - Prometheus metrics export via dephealth SDK
 - Kubernetes-native with Helm chart for instance-based deployment
 - Per-dependency configuration for check intervals, timeouts, TLS, and more
+- Authentication support: Bearer token, Basic Auth, custom HTTP headers and gRPC metadata
+- Secure secret management via `_FILE` suffix pattern (Kubernetes Secrets / Docker Secrets)
 
 ## Quick Start
 
@@ -112,6 +114,87 @@ For each dependency listed in `DEPHEALTH_DEPS`, configure it using environment v
 | `DEPHEALTH_<NAME>_AMQP_URL` | No | AMQP connection URL |
 
 *Either `URL` or `HOST` + `PORT` is required.
+
+### Authentication
+
+uniproxy supports authentication for HTTP and gRPC dependencies. Auth can be configured globally or per-dependency; per-dependency settings override global ones entirely.
+
+#### Auth Methods
+
+| Method | HTTP | gRPC | Description |
+|--------|:----:|:----:|-------------|
+| Bearer Token | Yes | Yes | `Authorization: Bearer <token>` header / gRPC call credential |
+| Basic Auth | Yes | Yes | `Authorization: Basic <base64>` header / gRPC call credential |
+| Custom Headers | Yes | — | Arbitrary HTTP headers (e.g., API keys) |
+| Custom Metadata | — | Yes | Arbitrary gRPC metadata key-value pairs |
+
+Only **one auth method** per dependency is allowed. Setting both bearer token and basic auth is an error.
+
+#### Global Auth Variables
+
+Applied to all dependencies that don't have per-dependency auth configured.
+
+| Variable | Description |
+|----------|-------------|
+| `DEPHEALTH_BEARER_TOKEN` | Global bearer token |
+| `DEPHEALTH_BEARER_TOKEN_FILE` | Read bearer token from file (mutually exclusive with above) |
+| `DEPHEALTH_BASIC_USER` | Global Basic Auth username |
+| `DEPHEALTH_BASIC_PASS` | Global Basic Auth password |
+| `DEPHEALTH_BASIC_PASS_FILE` | Read password from file (mutually exclusive with above) |
+| `DEPHEALTH_HEADERS` | Global custom HTTP headers (JSON: `{"Key":"Value"}`) |
+| `DEPHEALTH_METADATA` | Global custom gRPC metadata (JSON: `{"key":"value"}`) |
+
+Global headers are only applied to HTTP dependencies; global metadata is only applied to gRPC dependencies.
+
+#### Per-Dependency Auth Variables
+
+| Variable | Description |
+|----------|-------------|
+| `DEPHEALTH_<NAME>_BEARER_TOKEN` | Bearer token for this dependency |
+| `DEPHEALTH_<NAME>_BEARER_TOKEN_FILE` | Read bearer token from file |
+| `DEPHEALTH_<NAME>_BASIC_USER` | Basic Auth username |
+| `DEPHEALTH_<NAME>_BASIC_PASS` | Basic Auth password |
+| `DEPHEALTH_<NAME>_BASIC_PASS_FILE` | Read password from file |
+| `DEPHEALTH_<NAME>_HEADERS` | Custom HTTP headers (JSON string) |
+| `DEPHEALTH_<NAME>_METADATA` | Custom gRPC metadata (JSON string) |
+
+#### `_FILE` Suffix Pattern
+
+For any secret variable (`BEARER_TOKEN`, `BASIC_PASS`), you can append `_FILE` to read the value from a file instead of an environment variable. This is the recommended approach for Kubernetes Secrets and Docker Secrets:
+
+```bash
+# Mount K8s Secret as a file and reference it
+-e DEPHEALTH_API_BEARER_TOKEN_FILE=/run/secrets/api-token
+```
+
+Rules:
+- Setting both `VAR` and `VAR_FILE` is an error
+- File content is trimmed of leading/trailing whitespace
+- File must exist and be readable
+
+#### Validation Rules
+
+1. **One method per dependency**: bearer token, basic auth, headers, or metadata — pick one
+2. **Complete basic auth**: both `BASIC_USER` and `BASIC_PASS` must be set together
+3. **Type check**: `HEADERS` is only valid for HTTP; `METADATA` is only valid for gRPC
+4. **No VAR + VAR_FILE**: cannot set both inline value and file reference
+
+#### Auth Example
+
+```bash
+docker run -p 8080:8080 \
+  -e DEPHEALTH_NAME=auth-proxy \
+  -e DEPHEALTH_DEPS="secure-api:http,grpc-svc:grpc" \
+  -e DEPHEALTH_SECURE_API_URL="https://api.example.com" \
+  -e DEPHEALTH_SECURE_API_CRITICAL=yes \
+  -e DEPHEALTH_SECURE_API_BEARER_TOKEN="eyJhbGciOi..." \
+  -e DEPHEALTH_GRPC_SVC_HOST=grpc.example.com \
+  -e DEPHEALTH_GRPC_SVC_PORT=443 \
+  -e DEPHEALTH_GRPC_SVC_CRITICAL=yes \
+  -e DEPHEALTH_GRPC_SVC_BASIC_USER=admin \
+  -e DEPHEALTH_GRPC_SVC_BASIC_PASS=secret \
+  uniproxy:0.4.2
+```
 
 ### Supported Dependency Types
 
@@ -326,6 +409,7 @@ See [Use Cases and Examples](./docs/use-cases.md) for detailed scenarios includi
 - Sidecar for legacy applications without SDK integration
 - Network policy / firewall testing, CI/CD health gates
 - Multi-cluster monitoring, DB migration readiness, disaster recovery verification
+- Authentication: bearer tokens, K8s Secrets, custom API key headers
 
 ## Integration with dephealth-ui
 

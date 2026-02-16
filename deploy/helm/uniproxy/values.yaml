@@ -37,4 +37,22 @@ probes:
   readinessDelay: 5
   livenessDelay: 5
 
+# Instance list. Each instance defines a uniproxy deployment with its own connections.
+#
+# Connection auth options (per-connection, all optional):
+#   bearerToken: "token"         — inline bearer token
+#   basicUser: "user"            — inline Basic Auth username
+#   basicPass: "password"        — inline Basic Auth password
+#   headers: '{"X-Key":"val"}'   — HTTP-only: custom headers (JSON string)
+#   metadata: '{"key":"val"}'    — gRPC-only: custom metadata (JSON string)
+#
+# Using Kubernetes Secrets (recommended for production):
+#   auth:
+#     existingSecret: "my-secret"        — K8s Secret name
+#     bearerTokenKey: "token"            — key in Secret for bearer token
+#     basicUserKey: "username"           — key in Secret for Basic Auth user
+#     basicPassKey: "password"           — key in Secret for Basic Auth password
+#
+# Note: inline values and existingSecret can be combined (e.g., inline headers + secret bearer).
+# Only one auth method per connection: bearer OR basic auth (not both).
 instances: []

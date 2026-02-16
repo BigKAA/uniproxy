@@ -29,6 +29,9 @@ uniproxy works in any environment: Kubernetes, Docker, bare metal, VMs, or any c
 9. [Multi-Cluster Monitoring](#9-multi-cluster-monitoring)
 10. [Database Migration Readiness](#10-database-migration-readiness)
 11. [Disaster Recovery Verification](#11-disaster-recovery-verification)
+12. [Health-Checking Services Behind Bearer Auth](#12-health-checking-services-behind-bearer-auth)
+13. [Secure Credentials with Kubernetes Secrets](#13-secure-credentials-with-kubernetes-secrets)
+14. [Custom API Key Headers for Third-Party Services](#14-custom-api-key-headers-for-third-party-services)
 
 ---
 
@@ -898,6 +901,175 @@ Dependency status:
 
 Summary: 3/4 healthy
 DR site validation: PASSED
+```
+
+---
+
+## 12. Health-Checking Services Behind Bearer Auth
+
+### Problem
+
+Your HTTP or gRPC dependencies require authentication. Without proper credentials, health checks return `401 Unauthorized` or `403 Forbidden`, making it impossible to determine if the service is actually healthy.
+
+### Solution
+
+Configure uniproxy with bearer token authentication per dependency.
+
+### Architecture
+
+```
+uniproxy ──[Authorization: Bearer xxx]──> secure-api (HTTP 200 OK)
+    │
+    └──[Authorization: Bearer yyy]──> internal-svc (HTTP 200 OK)
+```
+
+### Configuration
+
+```bash
+docker run -p 8080:8080 \
+  -e DEPHEALTH_NAME=auth-monitor \
+  -e DEPHEALTH_DEPS="secure-api:http,internal-svc:http" \
+  -e DEPHEALTH_SECURE_API_URL="https://api.example.com/health" \
+  -e DEPHEALTH_SECURE_API_CRITICAL=yes \
+  -e DEPHEALTH_SECURE_API_BEARER_TOKEN="eyJhbGciOiJSUzI1NiIs..." \
+  -e DEPHEALTH_INTERNAL_SVC_URL="http://internal.svc:8080" \
+  -e DEPHEALTH_INTERNAL_SVC_CRITICAL=yes \
+  -e DEPHEALTH_INTERNAL_SVC_BEARER_TOKEN="internal-service-token" \
+  uniproxy:0.4.2
+```
+
+### Using Global Bearer Token
+
+If all dependencies use the same token, set it once globally:
+
+```bash
+docker run -p 8080:8080 \
+  -e DEPHEALTH_NAME=auth-monitor \
+  -e DEPHEALTH_BEARER_TOKEN="shared-token-for-all-deps" \
+  -e DEPHEALTH_DEPS="api-1:http,api-2:http" \
+  -e DEPHEALTH_API_1_URL="https://api-1.example.com" \
+  -e DEPHEALTH_API_1_CRITICAL=yes \
+  -e DEPHEALTH_API_2_URL="https://api-2.example.com" \
+  -e DEPHEALTH_API_2_CRITICAL=yes \
+  uniproxy:0.4.2
+```
+
+---
+
+## 13. Secure Credentials with Kubernetes Secrets
+
+### Problem
+
+Storing tokens and passwords directly in environment variables (ConfigMaps, Helm values) is a security risk. You need to use Kubernetes Secrets for sensitive auth data.
+
+### Solution
+
+Use the `_FILE` suffix pattern to read secrets from mounted files, or use `secretKeyRef` in Helm values.
+
+### Architecture
+
+```
+K8s Secret "api-creds"
+  └─ token: "eyJhbGci..."
+  └─ password: "s3cret"
+       │
+       ├──[mounted as /run/secrets/token]──> uniproxy (reads via _FILE)
+       └──[secretKeyRef in env]──> uniproxy (injected by kubelet)
+```
+
+### Option A: `_FILE` Pattern (Docker / K8s volume mount)
+
+```yaml
+# secret.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: api-creds
+type: Opaque
+stringData:
+  token: "eyJhbGciOiJSUzI1NiIs..."
+  password: "s3cret"
+```
+
+```yaml
+# deployment (volume mount approach)
+containers:
+  - name: uniproxy
+    env:
+      - name: DEPHEALTH_API_BEARER_TOKEN_FILE
+        value: /run/secrets/token
+    volumeMounts:
+      - name: secrets
+        mountPath: /run/secrets
+        readOnly: true
+volumes:
+  - name: secrets
+    secret:
+      secretName: api-creds
+```
+
+### Option B: Helm `existingSecret` (secretKeyRef)
+
+```yaml
+# instances/production.yaml
+instances:
+  - name: auth-proxy
+    connections:
+      - name: secure-api
+        type: http
+        url: "https://api.example.com"
+        critical: "yes"
+        auth:
+          existingSecret: "api-creds"
+          bearerTokenKey: "token"
+      - name: db-api
+        type: http
+        url: "https://db-api.internal:8080"
+        critical: "yes"
+        auth:
+          existingSecret: "api-creds"
+          basicUserKey: "username"
+          basicPassKey: "password"
+```
+
+This renders `valueFrom.secretKeyRef` in the deployment — no inline secrets in Helm values.
+
+---
+
+## 14. Custom API Key Headers for Third-Party Services
+
+### Problem
+
+Some third-party APIs use custom headers for authentication (e.g., `X-API-Key`, `X-Auth-Token`) instead of standard `Authorization` headers.
+
+### Solution
+
+Use the `HEADERS` option to send arbitrary HTTP headers with health checks.
+
+### Configuration
+
+```bash
+docker run -p 8080:8080 \
+  -e DEPHEALTH_NAME=api-monitor \
+  -e DEPHEALTH_DEPS="stripe:http,sendgrid:http,datadog:http" \
+  -e DEPHEALTH_STRIPE_URL="https://api.stripe.com/v1" \
+  -e DEPHEALTH_STRIPE_CRITICAL=yes \
+  -e DEPHEALTH_STRIPE_HEADERS='{"Authorization":"Bearer sk_live_xxx"}' \
+  -e DEPHEALTH_SENDGRID_URL="https://api.sendgrid.com/v3/scopes" \
+  -e DEPHEALTH_SENDGRID_CRITICAL=no \
+  -e DEPHEALTH_SENDGRID_HEADERS='{"Authorization":"Bearer SG.xxx"}' \
+  -e DEPHEALTH_DATADOG_URL="https://api.datadoghq.com/api/v1/validate" \
+  -e DEPHEALTH_DATADOG_CRITICAL=no \
+  -e DEPHEALTH_DATADOG_HEADERS='{"DD-API-KEY":"abc123","DD-APPLICATION-KEY":"def456"}' \
+  uniproxy:0.4.2
+```
+
+### gRPC Metadata
+
+For gRPC services, use `METADATA` to attach custom key-value pairs:
+
+```bash
+-e DEPHEALTH_GRPC_SVC_METADATA='{"x-api-key":"key123","x-request-id":"health-check"}'
 ```
 
 ---
