@@ -16,11 +16,12 @@
 
 - Health checking for HTTP, gRPC, PostgreSQL, MySQL, Redis, AMQP, Kafka, and TCP dependencies
 - Enriched Status API with detailed dependency info and recursive HTTP chain visibility
-- Configuration via environment variables (12-factor app)
+- Configuration via environment variables or YAML file (12-factor app)
+- Server-side authentication for status and metrics endpoints (Basic, Bearer, API Key)
 - Prometheus metrics export via dephealth SDK
 - Kubernetes-native with Helm chart for instance-based deployment
 - Per-dependency configuration for check intervals, timeouts, TLS, and more
-- Authentication support: Bearer token, Basic Auth, custom HTTP headers and gRPC metadata
+- Dependency authentication: Bearer token, Basic Auth, custom HTTP headers and gRPC metadata
 - Secure secret management via `_FILE` suffix pattern (Kubernetes Secrets / Docker Secrets)
 
 ## Quick Start
@@ -29,7 +30,7 @@
 
 ```bash
 # Build image
-docker build -t uniproxy:0.4.1 .
+docker build -t uniproxy:0.5.0 .
 
 # Run with an HTTP dependency
 docker run -p 8080:8080 \
@@ -37,7 +38,7 @@ docker run -p 8080:8080 \
   -e DEPHEALTH_DEPS="httpbin:http" \
   -e DEPHEALTH_HTTPBIN_URL="http://httpbin.org" \
   -e DEPHEALTH_HTTPBIN_CRITICAL=yes \
-  uniproxy:0.4.1
+  uniproxy:0.5.0
 ```
 
 ### Check Endpoints
@@ -70,12 +71,68 @@ helm install uniproxy-01 ./deploy/helm/uniproxy \
 
 ## Configuration
 
-All configuration is done via environment variables.
+uniproxy supports two configuration methods:
+
+1. **Environment variables** — traditional 12-factor approach (always works)
+2. **YAML configuration file** — structured config with env var overrides
+
+Environment variables always take priority over YAML values.
+
+### YAML Configuration
+
+Set `CONFIG_FILE` to the path of a YAML file to use structured configuration:
+
+```bash
+docker run -p 8080:8080 \
+  -e CONFIG_FILE=/config/config.yaml \
+  -v ./config.yaml:/config/config.yaml:ro \
+  uniproxy:0.5.0
+```
+
+Example YAML file:
+
+```yaml
+name: my-proxy
+listenAddr: ":8080"
+checkInterval: "15s"
+fetchTimeout: "3s"
+
+log:
+  format: json
+  level: info
+
+auth:
+  method: bearer
+  token: "my-secret-token"
+  metrics:
+    method: none
+
+dependencies:
+  - name: backend
+    type: http
+    url: "http://backend.svc:8080"
+    critical: true
+    healthPath: "/"
+  - name: cache
+    type: redis
+    host: redis.svc
+    port: "6379"
+    critical: false
+```
+
+See [examples/config.yaml](./examples/config.yaml) for a full example with all fields.
+
+**Priority rules:**
+- `CONFIG_FILE` env var → load YAML as base config
+- Environment variables → override YAML values
+- `DEPHEALTH_DEPS` env var → **replaces** all YAML dependencies (no merging)
+- Per-dependency env vars → overlay on existing (YAML-loaded) dependencies
 
 ### Global Variables
 
 | Variable | Required | Default | Description |
 |----------|:--------:|:-------:|-------------|
+| `CONFIG_FILE` | No | — | Path to YAML configuration file |
 | `DEPHEALTH_NAME` | Yes | — | Application name (used in metrics and status response) |
 | `DEPHEALTH_DEPS` | No | — | Comma-separated dependency list: `name1:type1,name2:type2` |
 | `LISTEN_ADDR` | No | `:8080` | HTTP server listen address |
@@ -115,11 +172,77 @@ For each dependency listed in `DEPHEALTH_DEPS`, configure it using environment v
 
 *Either `URL` or `HOST` + `PORT` is required.
 
-### Authentication
+### Server Authentication
+
+uniproxy supports server-side authentication to protect its own endpoints. Authentication is configured per zone — the status API (`/`) and Prometheus metrics (`/metrics`) can have independent auth settings. Health probes (`/healthz`, `/readyz`) are always open.
+
+#### Server Auth Methods
+
+| Method | Description |
+|--------|-------------|
+| `none` | No authentication (default) |
+| `basic` | HTTP Basic Auth (`Authorization: Basic <base64>`) |
+| `bearer` | Bearer token (`Authorization: Bearer <token>`) |
+| `apikey` | API key via `X-API-Key` header |
+
+#### Server Auth Variables
+
+| Variable | Description |
+|----------|-------------|
+| `AUTH_METHOD` | Global auth method: `none`, `basic`, `bearer`, `apikey` |
+| `AUTH_USER` | Global Basic Auth username |
+| `AUTH_PASS` | Global Basic Auth password |
+| `AUTH_PASS_FILE` | Read password from file |
+| `AUTH_TOKEN` | Global bearer token |
+| `AUTH_TOKEN_FILE` | Read token from file |
+| `AUTH_API_KEY` | Global API key |
+| `AUTH_API_KEY_FILE` | Read API key from file |
+
+#### Per-Zone Overrides
+
+Each zone (`status`, `metrics`) can override the global auth settings:
+
+| Variable | Description |
+|----------|-------------|
+| `AUTH_STATUS_METHOD` | Override method for `/` endpoint |
+| `AUTH_STATUS_USER` | Override username for `/` |
+| `AUTH_STATUS_PASS` | Override password for `/` |
+| `AUTH_STATUS_TOKEN` | Override token for `/` |
+| `AUTH_STATUS_API_KEY` | Override API key for `/` |
+| `AUTH_METRICS_METHOD` | Override method for `/metrics` |
+| `AUTH_METRICS_USER` | Override username for `/metrics` |
+| `AUTH_METRICS_PASS` | Override password for `/metrics` |
+| `AUTH_METRICS_TOKEN` | Override token for `/metrics` |
+| `AUTH_METRICS_API_KEY` | Override API key for `/metrics` |
+
+All `_PASS`, `_TOKEN`, and `_API_KEY` variables support the `_FILE` suffix pattern.
+
+#### Server Auth Examples
+
+```bash
+# Protect status API with bearer token, leave metrics open
+docker run -p 8080:8080 \
+  -e DEPHEALTH_NAME=my-proxy \
+  -e DEPHEALTH_DEPS="httpbin:http" \
+  -e DEPHEALTH_HTTPBIN_URL="http://httpbin.org" \
+  -e DEPHEALTH_HTTPBIN_CRITICAL=yes \
+  -e AUTH_METHOD=bearer \
+  -e AUTH_TOKEN=my-secret-token \
+  -e AUTH_METRICS_METHOD=none \
+  uniproxy:0.5.0
+
+# Test access
+curl http://localhost:8080/                                        # 401
+curl -H "Authorization: Bearer my-secret-token" http://localhost:8080/  # 200
+curl http://localhost:8080/metrics                                 # 200 (override: none)
+curl http://localhost:8080/healthz                                 # 200 (always open)
+```
+
+### Dependency Authentication
 
 uniproxy supports authentication for HTTP and gRPC dependencies. Auth can be configured globally or per-dependency; per-dependency settings override global ones entirely.
 
-#### Auth Methods
+#### Dependency Auth Methods
 
 | Method | HTTP | gRPC | Description |
 |--------|:----:|:----:|-------------|
@@ -193,7 +316,7 @@ docker run -p 8080:8080 \
   -e DEPHEALTH_GRPC_SVC_CRITICAL=yes \
   -e DEPHEALTH_GRPC_SVC_BASIC_USER=admin \
   -e DEPHEALTH_GRPC_SVC_BASIC_PASS=secret \
-  uniproxy:0.4.2
+  uniproxy:0.5.0
 ```
 
 ### Supported Dependency Types
@@ -216,7 +339,7 @@ docker run -p 8080:8080 \
   -e DEPHEALTH_CACHE_CRITICAL=no \
   -e DEPHEALTH_DB_URL="postgres://user:pass@pg.svc:5432/mydb" \
   -e DEPHEALTH_DB_CRITICAL=yes \
-  uniproxy:0.4.1
+  uniproxy:0.5.0
 ```
 
 ## API Endpoints
@@ -333,22 +456,30 @@ Additional labels per metric:
 uniproxy/
 ├── main.go                      # Entry point, SDK initialization
 ├── internal/
+│   ├── auth/
+│   │   ├── middleware.go        # Server-side auth middleware (Basic/Bearer/APIKey)
+│   │   └── middleware_test.go   # Auth middleware tests
 │   ├── config/
-│   │   ├── config.go            # Env var parsing
-│   │   └── config_test.go       # Config tests
+│   │   ├── config.go            # Env var + YAML config parsing
+│   │   ├── config_test.go       # Config tests
+│   │   ├── yaml.go              # YAML config structures and parser
+│   │   └── yaml_test.go         # YAML parsing tests
+│   ├── logging/
+│   │   └── logging.go           # Structured logging setup
 │   └── server/
 │       ├── server.go            # HTTP handlers, types
-│       ├── server_test.go       # Server tests (20 tests)
+│       ├── server_test.go       # Server tests
 │       ├── fetch.go             # Recursive HTTP fetch
 │       └── fetch_test.go        # Fetch tests
 ├── deploy/
 │   └── helm/
 │       └── uniproxy/
-│           ├── Chart.yaml       # Chart metadata (v0.4.1)
+│           ├── Chart.yaml       # Chart metadata (v0.5.0)
 │           ├── values.yaml      # Default values
 │           ├── templates/       # K8s manifest templates
 │           └── instances/       # Instance configurations
-├── plans/                       # Development plans
+├── examples/
+│   └── config.yaml              # Full YAML configuration example
 ├── Dockerfile                   # Multi-stage Docker build
 ├── go.mod
 ├── LICENSE
@@ -385,6 +516,19 @@ helm template uniproxy-01 ./deploy/helm/uniproxy \
 | `checkInterval` | `"10"` | Health check interval (seconds) |
 | `timeout` | `""` | Global check timeout (seconds) |
 | `fetchTimeout` | `"5"` | Recursive HTTP fetch timeout (seconds) |
+| `serverAuth.method` | `"none"` | Server auth method: `none`, `basic`, `bearer`, `apikey` |
+| `serverAuth.username` | — | Basic Auth username |
+| `serverAuth.password` | — | Basic Auth password |
+| `serverAuth.token` | — | Bearer token |
+| `serverAuth.apiKey` | — | API key |
+| `serverAuth.existingSecret` | — | K8s Secret name for credentials |
+| `serverAuth.tokenKey` | — | Key in Secret for token |
+| `serverAuth.passwordKey` | — | Key in Secret for password |
+| `serverAuth.apiKeyKey` | — | Key in Secret for API key |
+| `serverAuth.status` | — | Per-zone override for `/` endpoint |
+| `serverAuth.metrics` | — | Per-zone override for `/metrics` endpoint |
+| `configFile.enabled` | `false` | Enable YAML config via ConfigMap |
+| `configFile.content` | — | YAML config content (mounted as `/config/config.yaml`) |
 
 ## Testing
 

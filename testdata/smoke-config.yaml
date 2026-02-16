@@ -1,0 +1,7 @@
+name: yaml-smoke-test
+listenAddr: ":8080"
+dependencies:
+  - name: httpbin
+    type: http
+    url: "http://httpbin.org"
+    critical: true

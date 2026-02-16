@@ -1,0 +1,16 @@
+{{- if .Values.configFile.enabled }}
+{{- range .Values.instances }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .name }}-config
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "dephealth-uniproxy.labels" $ | nindent 4 }}
+    app.kubernetes.io/name: {{ .name }}
+data:
+  config.yaml: |
+    {{- $.Values.configFile.content | nindent 4 }}
+{{- end }}
+{{- end }}

@@ -1,0 +1,146 @@
+# uniproxy — full YAML configuration example
+#
+# Usage:
+#   docker run -e CONFIG_FILE=/config/config.yaml \
+#     -v ./config.yaml:/config/config.yaml:ro uniproxy:0.5.0
+#
+# Environment variables always override YAML values.
+# See README.md for details on priority rules.
+
+# Application name (required). Used in metrics labels and status API responses.
+name: my-proxy
+
+# HTTP server listen address.
+listenAddr: ":8080"
+
+# Health check interval. Supports Go duration ("15s", "1m30s") or seconds ("15").
+checkInterval: "15s"
+
+# Global health check timeout. Empty or omitted means SDK default.
+# timeout: "5s"
+
+# Timeout for recursive HTTP detail fetch (GET /?detail=true&depth=N).
+fetchTimeout: "3s"
+
+# Structured logging configuration.
+log:
+  # Output format: "text" or "json".
+  format: json
+  # Log level: "debug", "info", "warn", "error".
+  level: info
+  # Timestamp format: "rfc3339", "rfc3339nano", "unix", "unixmilli".
+  timeFormat: rfc3339nano
+  # Include source file:line in log output.
+  addSource: false
+  # Custom JSON keys (only effective with format: json).
+  # timeKey: "ts"
+  # levelKey: "severity"
+  # messageKey: "message"
+  # sourceKey: "caller"
+
+# Server-side authentication for uniproxy endpoints.
+# Protects / (status API) and /metrics independently.
+# /healthz and /readyz are always open.
+auth:
+  # Global auth method applied to all protected zones.
+  # Supported: "none", "basic", "bearer", "apikey".
+  method: bearer
+  # Credentials for the chosen method:
+  # username: "admin"       # basic auth
+  # password: "secret"      # basic auth
+  token: "my-secret-token"  # bearer auth
+  # apiKey: "key-123"       # apikey auth
+
+  # Per-zone overrides. Each zone inherits global settings
+  # unless explicitly overridden here.
+  status:
+    # Override for / endpoint. Inherits global if omitted.
+    method: bearer
+    token: "status-specific-token"
+
+  metrics:
+    # Override for /metrics endpoint.
+    # Set to "none" to leave metrics open while protecting status.
+    method: none
+
+# Dependencies to health-check.
+dependencies:
+  # HTTP dependency with URL.
+  - name: backend
+    type: http
+    url: "http://backend.svc:8080"
+    critical: true
+    healthPath: "/"
+    # Per-dependency check interval and timeout (override global).
+    # checkInterval: "5s"
+    # timeout: "3s"
+    # TLS options:
+    # tls: true
+    # tlsSkipVerify: false
+    # Dependency authentication (outgoing requests):
+    auth:
+      bearerToken: "dep-auth-token"
+
+  # HTTP dependency with host + port.
+  - name: api-gateway
+    type: http
+    host: api.example.com
+    port: "443"
+    critical: true
+    tls: true
+    auth:
+      basicUser: "service"
+      basicPass: "password"
+
+  # gRPC dependency.
+  - name: grpc-service
+    type: grpc
+    host: grpc.svc
+    port: "9090"
+    critical: false
+    # grpcServiceName: "my.service.v1"
+    auth:
+      metadata:
+        x-api-key: "grpc-key"
+
+  # Redis dependency.
+  - name: cache
+    type: redis
+    url: "redis://redis.svc:6379"
+    critical: false
+    # redisPassword: "redis-pass"
+    # redisDB: 0
+
+  # PostgreSQL dependency.
+  - name: database
+    type: postgres
+    url: "postgres://user:pass@pg.svc:5432/mydb"
+    critical: true
+    # postgresQuery: "SELECT 1"
+
+  # MySQL dependency.
+  # - name: mysql-db
+  #   type: mysql
+  #   url: "user:pass@tcp(mysql.svc:3306)/mydb"
+  #   critical: true
+  #   mysqlQuery: "SELECT 1"
+
+  # TCP dependency (simple port check).
+  # - name: smtp
+  #   type: tcp
+  #   host: smtp.svc
+  #   port: "25"
+  #   critical: false
+
+  # AMQP dependency.
+  # - name: rabbitmq
+  #   type: amqp
+  #   url: "amqp://user:pass@rabbitmq.svc:5672/"
+  #   critical: false
+
+  # Kafka dependency.
+  # - name: kafka
+  #   type: kafka
+  #   host: kafka.svc
+  #   port: "9092"
+  #   critical: false
