@@ -41,6 +41,23 @@ docker run -p 8080:8080 \
   uniproxy:0.5.0
 ```
 
+### Docker Compose
+
+Самый быстрый способ попробовать uniproxy с реальными зависимостями:
+
+```bash
+docker compose -f examples/docker-compose.yaml up -d
+
+# Проверить статус — Redis и PostgreSQL должны быть healthy
+curl http://localhost:8080/
+
+# Проверить метрики Prometheus
+curl http://localhost:8080/metrics | grep app_dependency_health
+
+# Остановить
+docker compose -f examples/docker-compose.yaml down
+```
+
 ### Проверка эндпоинтов
 
 ```bash
@@ -64,9 +81,9 @@ curl http://localhost:8080/metrics | grep app_dependency
 ### Kubernetes (Helm)
 
 ```bash
-helm install uniproxy-01 ./deploy/helm/uniproxy \
-  -f ./deploy/helm/uniproxy/instances/ns1-homelab.yaml \
-  -n uniproxy-ns1 --create-namespace
+helm install my-proxy charts/uniproxy \
+  --set config.name=my-proxy \
+  -n my-namespace --create-namespace
 ```
 
 ## Конфигурация
@@ -456,30 +473,21 @@ dephealth SDK экспортирует следующие метрики Prometh
 uniproxy/
 ├── main.go                      # Точка входа, инициализация SDK
 ├── internal/
-│   ├── auth/
-│   │   ├── middleware.go        # Серверная аутентификация (Basic/Bearer/APIKey)
-│   │   └── middleware_test.go   # Тесты middleware
-│   ├── config/
-│   │   ├── config.go            # Парсинг env vars + YAML конфигурации
-│   │   ├── config_test.go       # Тесты конфигурации
-│   │   ├── yaml.go              # YAML-структуры и парсер
-│   │   └── yaml_test.go         # Тесты YAML-парсинга
-│   ├── logging/
-│   │   └── logging.go           # Настройка структурированного логирования
-│   └── server/
-│       ├── server.go            # HTTP-обработчики, типы
-│       ├── server_test.go       # Тесты сервера
-│       ├── fetch.go             # Рекурсивный HTTP fetch
-│       └── fetch_test.go        # Тесты fetch
+│   ├── auth/                    # Серверная аутентификация (Basic/Bearer/APIKey)
+│   ├── config/                  # Парсинг env vars + YAML конфигурации
+│   ├── logging/                 # Настройка структурированного логирования
+│   └── server/                  # HTTP-обработчики, рекурсивный fetch
+├── charts/
+│   └── uniproxy/                # Стандартный Helm chart (single-instance)
+│       ├── Chart.yaml
+│       ├── values.yaml
+│       └── templates/           # Deployment, Service, Ingress, HTTPRoute, ConfigMap
 ├── deploy/
 │   └── helm/
-│       └── uniproxy/
-│           ├── Chart.yaml       # Метаданные чарта (v0.5.0)
-│           ├── values.yaml      # Значения по умолчанию
-│           ├── templates/       # Шаблоны манифестов K8s
-│           └── instances/       # Конфигурации экземпляров
+│       └── uniproxy/            # Legacy multi-instance Helm chart
 ├── examples/
-│   └── config.yaml              # Полный пример YAML-конфигурации
+│   ├── config.yaml              # Полный пример YAML-конфигурации
+│   └── docker-compose.yaml      # Docker Compose quick start (uniproxy + Redis + PostgreSQL)
 ├── Dockerfile                   # Многоэтапная сборка Docker
 ├── go.mod
 ├── LICENSE
@@ -488,47 +496,118 @@ uniproxy/
 
 ## Развёртывание в Helm
 
-Helm chart поддерживает инстанс-ориентированное развёртывание — несколько экземпляров uniproxy с разными конфигурациями зависимостей в одном namespace.
+Стандартный Helm chart (`charts/uniproxy/`) обеспечивает single-instance развёртывание с полной поддержкой типов Service, Ingress, Gateway API, серверной аутентификации и YAML-конфигурации.
 
 ```bash
-# Установка
-helm install uniproxy-01 ./deploy/helm/uniproxy \
-  -f ./deploy/helm/uniproxy/instances/ns1-homelab.yaml \
-  -n uniproxy-ns1 --create-namespace
+# Установка с минимальной конфигурацией
+helm install my-proxy charts/uniproxy \
+  --set config.name=my-proxy \
+  -n monitoring --create-namespace
+
+# Установка с файлом значений
+helm install my-proxy charts/uniproxy \
+  -f my-values.yaml \
+  -n monitoring --create-namespace
 
 # Обновление
-helm upgrade uniproxy-01 ./deploy/helm/uniproxy \
-  -f ./deploy/helm/uniproxy/instances/ns1-homelab.yaml \
-  -n uniproxy-ns1
+helm upgrade my-proxy charts/uniproxy -f my-values.yaml -n monitoring
 
 # Отладка рендеринга шаблонов
-helm template uniproxy-01 ./deploy/helm/uniproxy \
-  -f ./deploy/helm/uniproxy/instances/ns1-homelab.yaml
+helm template my-proxy charts/uniproxy -f my-values.yaml
+```
+
+### Типы Service
+
+**ClusterIP** (по умолчанию):
+
+```yaml
+service:
+  type: ClusterIP
+  port: 8080
+```
+
+**NodePort**:
+
+```yaml
+service:
+  type: NodePort
+  port: 8080
+  nodePort: 30080
+```
+
+**LoadBalancer**:
+
+```yaml
+service:
+  type: LoadBalancer
+  port: 8080
+  loadBalancerIP: "192.168.1.100"
+```
+
+### Ingress
+
+```yaml
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+  hosts:
+    - host: uniproxy.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: uniproxy-tls
+      hosts:
+        - uniproxy.example.com
+```
+
+### Gateway API
+
+```yaml
+gateway:
+  enabled: true
+  parentRefs:
+    - name: my-gateway
+      namespace: gateway-ns
+      sectionName: https
+  hostnames:
+    - uniproxy.example.com
 ```
 
 ### Параметры Helm
 
 | Параметр | По умолчанию | Описание |
 |----------|:------------:|----------|
-| `global.pushRegistry` | `""` | Префикс container registry |
-| `image.name` | `uniproxy` | Имя образа |
-| `image.tag` | `latest` | Тег образа |
-| `checkInterval` | `"10"` | Интервал проверки (секунды) |
-| `timeout` | `""` | Глобальный таймаут проверки (секунды) |
-| `fetchTimeout` | `"5"` | Таймаут рекурсивного HTTP fetch (секунды) |
-| `serverAuth.method` | `"none"` | Метод серверной auth: `none`, `basic`, `bearer`, `apikey` |
-| `serverAuth.username` | — | Логин Basic Auth |
-| `serverAuth.password` | — | Пароль Basic Auth |
-| `serverAuth.token` | — | Bearer token |
-| `serverAuth.apiKey` | — | API-ключ |
+| `replicaCount` | `1` | Количество реплик |
+| `image.repository` | `harbor.kryukov.lan/library/uniproxy` | Репозиторий образа |
+| `image.tag` | `""` (appVersion) | Тег образа |
+| `config.name` | `""` (имя релиза) | `DEPHEALTH_NAME` — имя приложения |
+| `config.listenAddr` | `":8080"` | `LISTEN_ADDR` |
+| `config.checkInterval` | `"10"` | `DEPHEALTH_CHECK_INTERVAL` |
+| `config.timeout` | `""` | `DEPHEALTH_TIMEOUT` |
+| `config.fetchTimeout` | `"5"` | `DEPHEALTH_FETCH_TIMEOUT` |
+| `config.deps` | `""` | `DEPHEALTH_DEPS` (напр. `"backend:http,cache:redis"`) |
+| `log.format` | `""` | `LOG_FORMAT`: `text` или `json` |
+| `log.level` | `""` | `LOG_LEVEL`: `debug`, `info`, `warn`, `error` |
+| `configFile.enabled` | `false` | Монтировать YAML-конфиг через ConfigMap |
+| `configFile.content` | — | Содержимое YAML-конфига |
+| `serverAuth.method` | `"none"` | Серверная auth: `none`, `basic`, `bearer`, `apikey` |
 | `serverAuth.existingSecret` | — | K8s Secret для учётных данных |
-| `serverAuth.tokenKey` | — | Ключ в Secret для токена |
-| `serverAuth.passwordKey` | — | Ключ в Secret для пароля |
-| `serverAuth.apiKeyKey` | — | Ключ в Secret для API-ключа |
 | `serverAuth.status` | — | Переопределение для эндпоинта `/` |
 | `serverAuth.metrics` | — | Переопределение для эндпоинта `/metrics` |
-| `configFile.enabled` | `false` | Включить YAML-конфиг через ConfigMap |
-| `configFile.content` | — | Содержимое YAML-конфига (монтируется как `/config/config.yaml`) |
+| `extraEnv` | `[]` | Дополнительные переменные окружения |
+| `service.type` | `ClusterIP` | Тип Service: `ClusterIP`, `NodePort`, `LoadBalancer` |
+| `service.port` | `8080` | Порт Service |
+| `ingress.enabled` | `false` | Включить ресурс Ingress |
+| `gateway.enabled` | `false` | Включить HTTPRoute (Gateway API) |
+
+Все доступные параметры: [`charts/uniproxy/values.yaml`](./charts/uniproxy/values.yaml).
+
+### Legacy Multi-Instance Chart
+
+Чарт в `deploy/helm/uniproxy/` поддерживает развёртывание нескольких экземпляров uniproxy из одного Helm-релиза. Подробности: [deploy/helm/uniproxy/values.yaml](./deploy/helm/uniproxy/values.yaml).
 
 ## Тестирование
 

@@ -1,0 +1,55 @@
+# uniproxy + Redis + PostgreSQL — quick start example
+#
+# Usage:
+#   docker compose -f examples/docker-compose.yaml up -d
+#   curl http://localhost:8080/
+#   curl http://localhost:8080/metrics | grep app_dependency
+#   docker compose -f examples/docker-compose.yaml down
+
+services:
+  uniproxy:
+    image: harbor.kryukov.lan/library/uniproxy:v0.5.0
+    # Build from source (uncomment to use local code):
+    # build: ../..
+    ports:
+      - "8080:8080"
+    environment:
+      DEPHEALTH_NAME: demo-proxy
+      DEPHEALTH_DEPS: "redis:redis,postgres:postgres"
+      DEPHEALTH_REDIS_URL: "redis://redis:6379"
+      DEPHEALTH_REDIS_CRITICAL: "yes"
+      DEPHEALTH_POSTGRES_URL: "postgres://demo:demo@postgres:5432/demo?sslmode=disable"
+      DEPHEALTH_POSTGRES_CRITICAL: "yes"
+      DEPHEALTH_CHECK_INTERVAL: "10"
+      LOG_FORMAT: json
+      LOG_LEVEL: info
+    # Alternative: YAML config file (uncomment and remove env vars above):
+    # environment:
+    #   CONFIG_FILE: /config/config.yaml
+    # volumes:
+    #   - ../examples/config.yaml:/config/config.yaml:ro
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+
+  redis:
+    image: harbor.kryukov.lan/docker/library/redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+
+  postgres:
+    image: harbor.kryukov.lan/docker/library/postgres:16-alpine
+    environment:
+      POSTGRES_USER: demo
+      POSTGRES_PASSWORD: demo
+      POSTGRES_DB: demo
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U demo -d demo"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
