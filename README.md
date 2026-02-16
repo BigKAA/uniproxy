@@ -41,6 +41,23 @@ docker run -p 8080:8080 \
   uniproxy:0.5.0
 ```
 
+### Docker Compose
+
+The quickest way to try uniproxy with real dependencies:
+
+```bash
+docker compose -f examples/docker-compose.yaml up -d
+
+# Check status — Redis and PostgreSQL should be healthy
+curl http://localhost:8080/
+
+# Check Prometheus metrics
+curl http://localhost:8080/metrics | grep app_dependency_health
+
+# Stop
+docker compose -f examples/docker-compose.yaml down
+```
+
 ### Check Endpoints
 
 ```bash
@@ -64,9 +81,9 @@ curl http://localhost:8080/metrics | grep app_dependency
 ### Kubernetes (Helm)
 
 ```bash
-helm install uniproxy-01 ./deploy/helm/uniproxy \
-  -f ./deploy/helm/uniproxy/instances/ns1-homelab.yaml \
-  -n uniproxy-ns1 --create-namespace
+helm install my-proxy charts/uniproxy \
+  --set config.name=my-proxy \
+  -n my-namespace --create-namespace
 ```
 
 ## Configuration
@@ -456,30 +473,21 @@ Additional labels per metric:
 uniproxy/
 ├── main.go                      # Entry point, SDK initialization
 ├── internal/
-│   ├── auth/
-│   │   ├── middleware.go        # Server-side auth middleware (Basic/Bearer/APIKey)
-│   │   └── middleware_test.go   # Auth middleware tests
-│   ├── config/
-│   │   ├── config.go            # Env var + YAML config parsing
-│   │   ├── config_test.go       # Config tests
-│   │   ├── yaml.go              # YAML config structures and parser
-│   │   └── yaml_test.go         # YAML parsing tests
-│   ├── logging/
-│   │   └── logging.go           # Structured logging setup
-│   └── server/
-│       ├── server.go            # HTTP handlers, types
-│       ├── server_test.go       # Server tests
-│       ├── fetch.go             # Recursive HTTP fetch
-│       └── fetch_test.go        # Fetch tests
+│   ├── auth/                    # Server-side auth middleware (Basic/Bearer/APIKey)
+│   ├── config/                  # Env var + YAML config parsing
+│   ├── logging/                 # Structured logging setup
+│   └── server/                  # HTTP handlers, recursive fetch
+├── charts/
+│   └── uniproxy/                # Standard Helm chart (single-instance)
+│       ├── Chart.yaml
+│       ├── values.yaml
+│       └── templates/           # Deployment, Service, Ingress, HTTPRoute, ConfigMap
 ├── deploy/
 │   └── helm/
-│       └── uniproxy/
-│           ├── Chart.yaml       # Chart metadata (v0.5.0)
-│           ├── values.yaml      # Default values
-│           ├── templates/       # K8s manifest templates
-│           └── instances/       # Instance configurations
+│       └── uniproxy/            # Legacy multi-instance Helm chart
 ├── examples/
-│   └── config.yaml              # Full YAML configuration example
+│   ├── config.yaml              # Full YAML configuration example
+│   └── docker-compose.yaml      # Docker Compose quick start (uniproxy + Redis + PostgreSQL)
 ├── Dockerfile                   # Multi-stage Docker build
 ├── go.mod
 ├── LICENSE
@@ -488,47 +496,118 @@ uniproxy/
 
 ## Helm Deployment
 
-The Helm chart supports instance-based deployment — multiple uniproxy instances with different dependency configurations in the same namespace.
+The standard Helm chart (`charts/uniproxy/`) provides a single-instance deployment with full support for Service types, Ingress, Gateway API, server auth, and YAML config.
 
 ```bash
-# Install
-helm install uniproxy-01 ./deploy/helm/uniproxy \
-  -f ./deploy/helm/uniproxy/instances/ns1-homelab.yaml \
-  -n uniproxy-ns1 --create-namespace
+# Install with minimal config
+helm install my-proxy charts/uniproxy \
+  --set config.name=my-proxy \
+  -n monitoring --create-namespace
+
+# Install with values file
+helm install my-proxy charts/uniproxy \
+  -f my-values.yaml \
+  -n monitoring --create-namespace
 
 # Upgrade
-helm upgrade uniproxy-01 ./deploy/helm/uniproxy \
-  -f ./deploy/helm/uniproxy/instances/ns1-homelab.yaml \
-  -n uniproxy-ns1
+helm upgrade my-proxy charts/uniproxy -f my-values.yaml -n monitoring
 
 # Debug template rendering
-helm template uniproxy-01 ./deploy/helm/uniproxy \
-  -f ./deploy/helm/uniproxy/instances/ns1-homelab.yaml
+helm template my-proxy charts/uniproxy -f my-values.yaml
+```
+
+### Service Types
+
+**ClusterIP** (default):
+
+```yaml
+service:
+  type: ClusterIP
+  port: 8080
+```
+
+**NodePort**:
+
+```yaml
+service:
+  type: NodePort
+  port: 8080
+  nodePort: 30080
+```
+
+**LoadBalancer**:
+
+```yaml
+service:
+  type: LoadBalancer
+  port: 8080
+  loadBalancerIP: "192.168.1.100"
+```
+
+### Ingress
+
+```yaml
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+  hosts:
+    - host: uniproxy.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: uniproxy-tls
+      hosts:
+        - uniproxy.example.com
+```
+
+### Gateway API
+
+```yaml
+gateway:
+  enabled: true
+  parentRefs:
+    - name: my-gateway
+      namespace: gateway-ns
+      sectionName: https
+  hostnames:
+    - uniproxy.example.com
 ```
 
 ### Helm Values
 
 | Value | Default | Description |
 |-------|:-------:|-------------|
-| `global.pushRegistry` | `""` | Container registry prefix |
-| `image.name` | `uniproxy` | Image name |
-| `image.tag` | `latest` | Image tag |
-| `checkInterval` | `"10"` | Health check interval (seconds) |
-| `timeout` | `""` | Global check timeout (seconds) |
-| `fetchTimeout` | `"5"` | Recursive HTTP fetch timeout (seconds) |
-| `serverAuth.method` | `"none"` | Server auth method: `none`, `basic`, `bearer`, `apikey` |
-| `serverAuth.username` | — | Basic Auth username |
-| `serverAuth.password` | — | Basic Auth password |
-| `serverAuth.token` | — | Bearer token |
-| `serverAuth.apiKey` | — | API key |
+| `replicaCount` | `1` | Number of pod replicas |
+| `image.repository` | `harbor.kryukov.lan/library/uniproxy` | Image repository |
+| `image.tag` | `""` (appVersion) | Image tag |
+| `config.name` | `""` (release name) | `DEPHEALTH_NAME` — application name |
+| `config.listenAddr` | `":8080"` | `LISTEN_ADDR` |
+| `config.checkInterval` | `"10"` | `DEPHEALTH_CHECK_INTERVAL` |
+| `config.timeout` | `""` | `DEPHEALTH_TIMEOUT` |
+| `config.fetchTimeout` | `"5"` | `DEPHEALTH_FETCH_TIMEOUT` |
+| `config.deps` | `""` | `DEPHEALTH_DEPS` (e.g. `"backend:http,cache:redis"`) |
+| `log.format` | `""` | `LOG_FORMAT`: `text` or `json` |
+| `log.level` | `""` | `LOG_LEVEL`: `debug`, `info`, `warn`, `error` |
+| `configFile.enabled` | `false` | Mount YAML config via ConfigMap |
+| `configFile.content` | — | YAML config content |
+| `serverAuth.method` | `"none"` | Server auth: `none`, `basic`, `bearer`, `apikey` |
 | `serverAuth.existingSecret` | — | K8s Secret name for credentials |
-| `serverAuth.tokenKey` | — | Key in Secret for token |
-| `serverAuth.passwordKey` | — | Key in Secret for password |
-| `serverAuth.apiKeyKey` | — | Key in Secret for API key |
 | `serverAuth.status` | — | Per-zone override for `/` endpoint |
 | `serverAuth.metrics` | — | Per-zone override for `/metrics` endpoint |
-| `configFile.enabled` | `false` | Enable YAML config via ConfigMap |
-| `configFile.content` | — | YAML config content (mounted as `/config/config.yaml`) |
+| `extraEnv` | `[]` | Additional environment variables |
+| `service.type` | `ClusterIP` | Service type: `ClusterIP`, `NodePort`, `LoadBalancer` |
+| `service.port` | `8080` | Service port |
+| `ingress.enabled` | `false` | Enable Ingress resource |
+| `gateway.enabled` | `false` | Enable HTTPRoute (Gateway API) |
+
+See [`charts/uniproxy/values.yaml`](./charts/uniproxy/values.yaml) for all available values.
+
+### Legacy Multi-Instance Chart
+
+The chart at `deploy/helm/uniproxy/` supports deploying multiple uniproxy instances from a single Helm release. See [deploy/helm/uniproxy/values.yaml](./deploy/helm/uniproxy/values.yaml) for details.
 
 ## Testing
 

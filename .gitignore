@@ -1,5 +1,5 @@
 # Binaries
-uniproxy
+/uniproxy
 *.exe
 *.dll
 *.so

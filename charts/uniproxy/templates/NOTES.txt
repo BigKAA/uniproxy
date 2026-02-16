@@ -1,0 +1,59 @@
+uniproxy has been deployed successfully.
+
+Application name: {{ default (include "uniproxy.fullname" .) .Values.config.name }}
+
+{{- if .Values.ingress.enabled }}
+
+Access via Ingress:
+{{- range .Values.ingress.hosts }}
+  {{- range .paths }}
+  http{{ if $.Values.ingress.tls }}s{{ end }}://{{ $.Values.ingress.hosts | first | dig "host" "localhost" }}{{ .path }}
+  {{- end }}
+{{- end }}
+
+{{- else if .Values.gateway.enabled }}
+
+Access via Gateway API:
+{{- range .Values.gateway.hostnames }}
+  https://{{ . }}/
+{{- end }}
+
+{{- else if contains "NodePort" .Values.service.type }}
+
+Access via NodePort:
+  export NODE_IP=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}')
+  export NODE_PORT=$(kubectl get svc {{ include "uniproxy.fullname" . }} -n {{ .Release.Namespace }} -o jsonpath='{.spec.ports[0].nodePort}')
+  curl http://$NODE_IP:$NODE_PORT/
+
+{{- else if contains "LoadBalancer" .Values.service.type }}
+
+Access via LoadBalancer:
+  export LB_IP=$(kubectl get svc {{ include "uniproxy.fullname" . }} -n {{ .Release.Namespace }} -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+  curl http://$LB_IP:{{ .Values.service.port }}/
+
+{{- else }}
+
+Access via port-forward:
+  kubectl port-forward -n {{ .Release.Namespace }} svc/{{ include "uniproxy.fullname" . }} 8080:{{ .Values.service.port }}
+  curl http://localhost:8080/
+
+{{- end }}
+
+Verify endpoints:
+  curl <URL>/           # Status API (JSON)
+  curl <URL>/healthz    # Liveness probe
+  curl <URL>/readyz     # Readiness probe
+  curl <URL>/metrics    # Prometheus metrics
+
+{{- if and .Values.serverAuth.method (ne .Values.serverAuth.method "none") }}
+
+Authentication is enabled (method: {{ .Values.serverAuth.method }}).
+  {{- if eq .Values.serverAuth.method "bearer" }}
+  curl -H "Authorization: Bearer <token>" <URL>/
+  {{- else if eq .Values.serverAuth.method "basic" }}
+  curl -u <username>:<password> <URL>/
+  {{- else if eq .Values.serverAuth.method "apikey" }}
+  curl -H "X-API-Key: <key>" <URL>/
+  {{- end }}
+Note: /healthz and /readyz are always open (no auth required).
+{{- end }}

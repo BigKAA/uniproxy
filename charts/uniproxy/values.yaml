@@ -1,0 +1,165 @@
+# uniproxy — default values
+#
+# Usage:
+#   helm install my-proxy charts/uniproxy --set config.name=my-proxy
+
+replicaCount: 1
+
+image:
+  repository: harbor.kryukov.lan/library/uniproxy
+  tag: ""  # defaults to appVersion
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+# --- Application configuration ---
+
+config:
+  # DEPHEALTH_NAME (required). Defaults to release name if empty.
+  name: ""
+  # LISTEN_ADDR
+  listenAddr: ":8080"
+  # DEPHEALTH_CHECK_INTERVAL (seconds or Go duration)
+  checkInterval: "10"
+  # DEPHEALTH_TIMEOUT (empty = SDK default)
+  timeout: ""
+  # DEPHEALTH_FETCH_TIMEOUT (seconds for recursive detail fetch)
+  fetchTimeout: "5"
+  # DEPHEALTH_DEPS (e.g. "backend:http,cache:redis")
+  deps: ""
+
+# --- Logging ---
+
+log:
+  # LOG_FORMAT: text | json (empty = default)
+  format: ""
+  # LOG_LEVEL: debug | info | warn | error (empty = default)
+  level: ""
+  # LOG_TIME_FORMAT: rfc3339 | rfc3339nano | unix | unixmilli
+  timeFormat: ""
+  # LOG_ADD_SOURCE: true | false
+  addSource: ""
+  # Custom JSON keys (only effective with format: json)
+  timeKey: ""
+  levelKey: ""
+  messageKey: ""
+  sourceKey: ""
+
+# --- YAML config file (alternative to env vars) ---
+
+configFile:
+  enabled: false
+  # content: |
+  #   name: my-proxy
+  #   dependencies:
+  #     - name: backend
+  #       type: http
+  #       url: "http://backend.svc:8080"
+  #       critical: true
+
+# --- Server-side authentication ---
+# Protects / (status API) and /metrics independently.
+# /healthz and /readyz are always open.
+
+serverAuth:
+  # Global auth method: none | basic | bearer | apikey
+  method: "none"
+  # Inline credentials (NOT recommended for production):
+  # username: ""
+  # password: ""
+  # token: ""
+  # apiKey: ""
+  #
+  # Use an existing Kubernetes Secret (recommended):
+  # existingSecret: ""
+  # tokenKey: ""       # key in Secret for bearer token
+  # passwordKey: ""    # key in Secret for password
+  # apiKeyKey: ""      # key in Secret for API key
+  #
+  # Per-zone overrides (inherit global if omitted):
+  # status:
+  #   method: "basic"
+  #   username: "admin"
+  #   password: "secret"
+  # metrics:
+  #   method: "none"
+
+# --- Additional environment variables (escape hatch) ---
+
+extraEnv: []
+  # - name: MY_CUSTOM_VAR
+  #   value: "my-value"
+  # - name: SECRET_VAR
+  #   valueFrom:
+  #     secretKeyRef:
+  #       name: my-secret
+  #       key: secret-key
+
+# --- Service ---
+
+service:
+  type: ClusterIP
+  port: 8080
+  # targetPort: 8080  # defaults to port
+  # nodePort: 30080   # only for NodePort
+  # loadBalancerIP: "" # only for LoadBalancer
+  annotations: {}
+
+# --- Ingress ---
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+    # cert-manager.io/cluster-issuer: dev-ca-issuer
+  tls: []
+    # - secretName: uniproxy-tls
+    #   hosts:
+    #     - uniproxy.example.com
+  hosts: []
+    # - host: uniproxy.example.com
+    #   paths:
+    #     - path: /
+    #       pathType: Prefix
+
+# --- Gateway API (HTTPRoute) ---
+
+gateway:
+  enabled: false
+  annotations: {}
+  parentRefs: []
+    # - name: my-gateway
+    #   namespace: gateway-ns
+    #   sectionName: https
+  hostnames: []
+    # - uniproxy.example.com
+
+# --- Resources ---
+
+resources:
+  requests:
+    cpu: 10m
+    memory: 32Mi
+  limits:
+    cpu: 100m
+    memory: 64Mi
+
+# --- Probes ---
+
+probes:
+  readiness:
+    initialDelaySeconds: 5
+    periodSeconds: 5
+  liveness:
+    initialDelaySeconds: 5
+    periodSeconds: 10
+
+# --- Scheduling ---
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+podAnnotations: {}
+podLabels: {}
