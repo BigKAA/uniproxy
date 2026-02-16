@@ -138,6 +138,9 @@ func convertYAMLToConfig(yc *yamlConfig) (*Config, error) {
 		return nil, fmt.Errorf("fetchTimeout: %w", err)
 	}
 
+	// Server auth.
+	cfg.Auth = convertYAMLAuth(&yc.Auth)
+
 	// Dependencies.
 	for i, yd := range yc.Dependencies {
 		dep, err := convertYAMLDep(&yd)
@@ -191,6 +194,39 @@ func convertYAMLDep(yd *yamlDep) (Dependency, error) {
 	}
 
 	return dep, nil
+}
+
+// convertYAMLAuth converts yamlAuthConfig to AuthConfig.
+func convertYAMLAuth(ya *yamlAuthConfig) AuthConfig {
+	ac := AuthConfig{
+		Method:   ya.Method,
+		Username: ya.Username,
+		Password: ya.Password,
+		Token:    ya.Token,
+		APIKey:   ya.APIKey,
+	}
+
+	if ya.Status != nil {
+		ac.Status = &ZoneAuth{
+			Method:   ya.Status.Method,
+			Username: ya.Status.Username,
+			Password: ya.Status.Password,
+			Token:    ya.Status.Token,
+			APIKey:   ya.Status.APIKey,
+		}
+	}
+
+	if ya.Metrics != nil {
+		ac.Metrics = &ZoneAuth{
+			Method:   ya.Metrics.Method,
+			Username: ya.Metrics.Username,
+			Password: ya.Metrics.Password,
+			Token:    ya.Metrics.Token,
+			APIKey:   ya.Metrics.APIKey,
+		}
+	}
+
+	return ac
 }
 
 // parseDurationFlexible parses a duration from string.
