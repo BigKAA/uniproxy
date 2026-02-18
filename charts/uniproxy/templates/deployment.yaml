@@ -40,6 +40,8 @@ spec:
             # --- Core ---
             - name: DEPHEALTH_NAME
               value: {{ default (include "uniproxy.fullname" .) .Values.config.name | quote }}
+            - name: DEPHEALTH_GROUP
+              value: {{ .Values.config.group | quote }}
             - name: LISTEN_ADDR
               value: {{ .Values.config.listenAddr | quote }}
             - name: DEPHEALTH_CHECK_INTERVAL

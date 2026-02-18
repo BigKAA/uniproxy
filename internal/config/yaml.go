@@ -13,6 +13,7 @@ import (
 // Duration fields use string to support both Go duration ("15s") and plain seconds ("15").
 type yamlConfig struct {
 	Name          string         `yaml:"name"`
+	Group         string         `yaml:"group"`
 	ListenAddr    string         `yaml:"listenAddr"`
 	Log           yamlLogConfig  `yaml:"log"`
 	Auth          yamlAuthConfig `yaml:"auth"`
@@ -104,6 +105,7 @@ func loadFromYAML(path string) (*Config, error) {
 func convertYAMLToConfig(yc *yamlConfig) (*Config, error) {
 	cfg := &Config{
 		Name:       yc.Name,
+		Group:      yc.Group,
 		ListenAddr: yc.ListenAddr,
 	}
 

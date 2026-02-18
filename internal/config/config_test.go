@@ -19,6 +19,7 @@ func setEnvs(t *testing.T, envs map[string]string) {
 func TestLoad_MinimalValid(t *testing.T) {
 	setEnvs(t, map[string]string{
 		"DEPHEALTH_NAME":              "test-app",
+		"DEPHEALTH_GROUP":              "test",
 		"DEPHEALTH_DEPS":              "svc:http",
 		"DEPHEALTH_SVC_URL":           "http://svc.default.svc:8080",
 		"DEPHEALTH_SVC_CRITICAL":      "yes",
@@ -49,6 +50,7 @@ func TestLoad_MinimalValid(t *testing.T) {
 func TestLoad_MultipleDeps(t *testing.T) {
 	setEnvs(t, map[string]string{
 		"DEPHEALTH_NAME":                    "uniproxy-01",
+		"DEPHEALTH_GROUP":                    "test",
 		"DEPHEALTH_DEPS":                    "uniproxy-02:http,redis:redis,postgresql:postgres,grpc-stub:grpc",
 		"DEPHEALTH_UNIPROXY_02_URL":         "http://uniproxy-02.svc:8080",
 		"DEPHEALTH_UNIPROXY_02_CRITICAL":    "yes",
@@ -98,6 +100,7 @@ func TestLoad_MultipleDeps(t *testing.T) {
 func TestLoad_CustomInterval(t *testing.T) {
 	setEnvs(t, map[string]string{
 		"DEPHEALTH_NAME":           "app",
+		"DEPHEALTH_GROUP":           "test",
 		"DEPHEALTH_DEPS":           "svc:http",
 		"DEPHEALTH_SVC_URL":        "http://svc:80",
 		"DEPHEALTH_SVC_CRITICAL":   "yes",
@@ -128,10 +131,64 @@ func TestLoad_MissingName(t *testing.T) {
 	}
 }
 
+func TestLoad_MissingGroup(t *testing.T) {
+	os.Unsetenv("DEPHEALTH_GROUP")
+	setEnvs(t, map[string]string{
+		"DEPHEALTH_NAME":         "app",
+		"DEPHEALTH_DEPS":         "svc:http",
+		"DEPHEALTH_SVC_URL":      "http://svc:80",
+		"DEPHEALTH_SVC_CRITICAL": "yes",
+	})
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected error for missing DEPHEALTH_GROUP")
+	}
+	if !strings.Contains(err.Error(), "DEPHEALTH_GROUP") {
+		t.Errorf("error should mention DEPHEALTH_GROUP, got: %v", err)
+	}
+}
+
+func TestLoad_GroupFromEnv(t *testing.T) {
+	setEnvs(t, map[string]string{
+		"DEPHEALTH_NAME":  "app",
+		"DEPHEALTH_GROUP": "backend",
+	})
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Group != "backend" {
+		t.Errorf("Group = %q, want %q", cfg.Group, "backend")
+	}
+}
+
+func TestLoad_GroupEnvOverridesYAML(t *testing.T) {
+	yamlContent := `
+name: yaml-app
+group: yaml-group
+`
+	path := writeTestYAML(t, yamlContent)
+	setEnvs(t, map[string]string{
+		"CONFIG_FILE":    path,
+		"DEPHEALTH_GROUP": "env-group",
+	})
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Group != "env-group" {
+		t.Errorf("Group = %q, want %q (env override)", cfg.Group, "env-group")
+	}
+}
+
 func TestLoad_NoDeps(t *testing.T) {
 	os.Unsetenv("DEPHEALTH_DEPS")
 	setEnvs(t, map[string]string{
 		"DEPHEALTH_NAME": "app",
+		"DEPHEALTH_GROUP": "test",
 	})
 
 	cfg, err := Load()
@@ -146,6 +203,7 @@ func TestLoad_NoDeps(t *testing.T) {
 func TestLoad_InvalidDepType(t *testing.T) {
 	setEnvs(t, map[string]string{
 		"DEPHEALTH_NAME": "app",
+		"DEPHEALTH_GROUP": "test",
 		"DEPHEALTH_DEPS": "svc:mongodb",
 	})
 
@@ -159,6 +217,7 @@ func TestLoad_MissingCritical(t *testing.T) {
 	os.Unsetenv("DEPHEALTH_SVC_CRITICAL")
 	setEnvs(t, map[string]string{
 		"DEPHEALTH_NAME":    "app",
+		"DEPHEALTH_GROUP":    "test",
 		"DEPHEALTH_DEPS":    "svc:http",
 		"DEPHEALTH_SVC_URL": "http://svc:80",
 	})
@@ -175,6 +234,7 @@ func TestLoad_MissingURL(t *testing.T) {
 	os.Unsetenv("DEPHEALTH_SVC_PORT")
 	setEnvs(t, map[string]string{
 		"DEPHEALTH_NAME":         "app",
+		"DEPHEALTH_GROUP":         "test",
 		"DEPHEALTH_DEPS":         "svc:http",
 		"DEPHEALTH_SVC_CRITICAL": "yes",
 	})
@@ -188,6 +248,7 @@ func TestLoad_MissingURL(t *testing.T) {
 func TestLoad_NewDepTypes(t *testing.T) {
 	setEnvs(t, map[string]string{
 		"DEPHEALTH_NAME":             "app",
+		"DEPHEALTH_GROUP":             "test",
 		"DEPHEALTH_DEPS":             "t:tcp,m:mysql,a:amqp,k:kafka",
 		"DEPHEALTH_T_HOST":           "tcp.svc",
 		"DEPHEALTH_T_PORT":           "9000",
@@ -221,6 +282,7 @@ func TestLoad_NewDepTypes(t *testing.T) {
 func TestLoad_GlobalTimeout(t *testing.T) {
 	setEnvs(t, map[string]string{
 		"DEPHEALTH_NAME":    "app",
+		"DEPHEALTH_GROUP":    "test",
 		"DEPHEALTH_TIMEOUT": "5",
 	})
 
@@ -236,6 +298,7 @@ func TestLoad_GlobalTimeout(t *testing.T) {
 func TestLoad_PerDepOptions(t *testing.T) {
 	setEnvs(t, map[string]string{
 		"DEPHEALTH_NAME":                      "app",
+		"DEPHEALTH_GROUP":                      "test",
 		"DEPHEALTH_DEPS":                      "web:http,rpc:grpc,pg:postgres,r:redis",
 		"DEPHEALTH_WEB_URL":                   "https://web.svc:443",
 		"DEPHEALTH_WEB_CRITICAL":              "yes",
@@ -313,6 +376,7 @@ func TestLoad_PerDepOptions(t *testing.T) {
 func TestLoad_AMQPOptions(t *testing.T) {
 	setEnvs(t, map[string]string{
 		"DEPHEALTH_NAME":           "app",
+		"DEPHEALTH_GROUP":           "test",
 		"DEPHEALTH_DEPS":           "mq:amqp",
 		"DEPHEALTH_MQ_HOST":        "amqp.svc",
 		"DEPHEALTH_MQ_PORT":        "5672",
@@ -333,6 +397,7 @@ func TestLoad_AMQPOptions(t *testing.T) {
 func TestLoad_MySQLOptions(t *testing.T) {
 	setEnvs(t, map[string]string{
 		"DEPHEALTH_NAME":             "app",
+		"DEPHEALTH_GROUP":             "test",
 		"DEPHEALTH_DEPS":             "db:mysql",
 		"DEPHEALTH_DB_URL":           "mysql://mysql.svc:3306/testdb",
 		"DEPHEALTH_DB_CRITICAL":      "yes",
@@ -352,6 +417,7 @@ func TestLoad_MySQLOptions(t *testing.T) {
 func TestLoad_FetchTimeout_Default(t *testing.T) {
 	setEnvs(t, map[string]string{
 		"DEPHEALTH_NAME": "app",
+		"DEPHEALTH_GROUP": "test",
 	})
 
 	cfg, err := Load()
@@ -366,6 +432,7 @@ func TestLoad_FetchTimeout_Default(t *testing.T) {
 func TestLoad_FetchTimeout_Custom(t *testing.T) {
 	setEnvs(t, map[string]string{
 		"DEPHEALTH_NAME":          "app",
+		"DEPHEALTH_GROUP":          "test",
 		"DEPHEALTH_FETCH_TIMEOUT": "10.5",
 	})
 
@@ -382,6 +449,7 @@ func TestLoad_FetchTimeout_Custom(t *testing.T) {
 func TestLoad_FetchTimeout_Invalid(t *testing.T) {
 	setEnvs(t, map[string]string{
 		"DEPHEALTH_NAME":          "app",
+		"DEPHEALTH_GROUP":          "test",
 		"DEPHEALTH_FETCH_TIMEOUT": "abc",
 	})
 
@@ -394,6 +462,7 @@ func TestLoad_FetchTimeout_Invalid(t *testing.T) {
 func TestLoad_FetchTimeout_Negative(t *testing.T) {
 	setEnvs(t, map[string]string{
 		"DEPHEALTH_NAME":          "app",
+		"DEPHEALTH_GROUP":          "test",
 		"DEPHEALTH_FETCH_TIMEOUT": "-1",
 	})
 
@@ -406,6 +475,7 @@ func TestLoad_FetchTimeout_Negative(t *testing.T) {
 func TestLoad_LogConfig_Defaults(t *testing.T) {
 	setEnvs(t, map[string]string{
 		"DEPHEALTH_NAME": "app",
+		"DEPHEALTH_GROUP": "test",
 	})
 
 	cfg, err := Load()
@@ -433,6 +503,7 @@ func TestLoad_LogConfig_Defaults(t *testing.T) {
 func TestLoad_LogConfig_AllVars(t *testing.T) {
 	setEnvs(t, map[string]string{
 		"DEPHEALTH_NAME":  "app",
+		"DEPHEALTH_GROUP":  "test",
 		"LOG_FORMAT":      "json",
 		"LOG_LEVEL":       "warn",
 		"LOG_TIME_FORMAT":  "unix",
@@ -476,6 +547,7 @@ func TestLoad_LogConfig_AllVars(t *testing.T) {
 func TestLoad_LogConfig_InvalidFormat(t *testing.T) {
 	setEnvs(t, map[string]string{
 		"DEPHEALTH_NAME": "app",
+		"DEPHEALTH_GROUP": "test",
 		"LOG_FORMAT":     "xml",
 	})
 
@@ -488,6 +560,7 @@ func TestLoad_LogConfig_InvalidFormat(t *testing.T) {
 func TestLoad_LogConfig_InvalidLevel(t *testing.T) {
 	setEnvs(t, map[string]string{
 		"DEPHEALTH_NAME": "app",
+		"DEPHEALTH_GROUP": "test",
 		"LOG_LEVEL":      "trace",
 	})
 
@@ -500,6 +573,7 @@ func TestLoad_LogConfig_InvalidLevel(t *testing.T) {
 func TestLoad_LogConfig_InvalidTimeFormat(t *testing.T) {
 	setEnvs(t, map[string]string{
 		"DEPHEALTH_NAME":  "app",
+		"DEPHEALTH_GROUP":  "test",
 		"LOG_TIME_FORMAT": "iso8601",
 	})
 
@@ -512,6 +586,7 @@ func TestLoad_LogConfig_InvalidTimeFormat(t *testing.T) {
 func TestLoad_LogConfig_InvalidAddSource(t *testing.T) {
 	setEnvs(t, map[string]string{
 		"DEPHEALTH_NAME": "app",
+		"DEPHEALTH_GROUP": "test",
 		"LOG_ADD_SOURCE": "maybe",
 	})
 
@@ -524,6 +599,7 @@ func TestLoad_LogConfig_InvalidAddSource(t *testing.T) {
 func TestLoad_LogConfig_BackwardCompat(t *testing.T) {
 	setEnvs(t, map[string]string{
 		"DEPHEALTH_NAME": "app",
+		"DEPHEALTH_GROUP": "test",
 		"LOG_LEVEL":      "debug",
 	})
 
@@ -636,6 +712,7 @@ func TestResolveSecret_FileNotReadable(t *testing.T) {
 func TestLoad_Auth_HTTPBearerToken(t *testing.T) {
 	setEnvs(t, map[string]string{
 		"DEPHEALTH_NAME":             "app",
+		"DEPHEALTH_GROUP":             "test",
 		"DEPHEALTH_DEPS":             "api:http",
 		"DEPHEALTH_API_URL":          "http://api.svc:8080",
 		"DEPHEALTH_API_CRITICAL":     "yes",
@@ -655,6 +732,7 @@ func TestLoad_Auth_HTTPBearerToken(t *testing.T) {
 func TestLoad_Auth_HTTPBasicAuth(t *testing.T) {
 	setEnvs(t, map[string]string{
 		"DEPHEALTH_NAME":            "app",
+		"DEPHEALTH_GROUP":            "test",
 		"DEPHEALTH_DEPS":            "api:http",
 		"DEPHEALTH_API_URL":         "http://api.svc:8080",
 		"DEPHEALTH_API_CRITICAL":    "yes",
@@ -678,6 +756,7 @@ func TestLoad_Auth_HTTPBasicAuth(t *testing.T) {
 func TestLoad_Auth_HTTPHeaders(t *testing.T) {
 	setEnvs(t, map[string]string{
 		"DEPHEALTH_NAME":          "app",
+		"DEPHEALTH_GROUP":          "test",
 		"DEPHEALTH_DEPS":          "api:http",
 		"DEPHEALTH_API_URL":       "http://api.svc:8080",
 		"DEPHEALTH_API_CRITICAL":  "yes",
@@ -703,6 +782,7 @@ func TestLoad_Auth_HTTPHeaders(t *testing.T) {
 func TestLoad_Auth_GRPCBearerToken(t *testing.T) {
 	setEnvs(t, map[string]string{
 		"DEPHEALTH_NAME":             "app",
+		"DEPHEALTH_GROUP":             "test",
 		"DEPHEALTH_DEPS":             "rpc:grpc",
 		"DEPHEALTH_RPC_HOST":         "grpc.svc",
 		"DEPHEALTH_RPC_PORT":         "443",
@@ -723,6 +803,7 @@ func TestLoad_Auth_GRPCBearerToken(t *testing.T) {
 func TestLoad_Auth_GRPCBasicAuth(t *testing.T) {
 	setEnvs(t, map[string]string{
 		"DEPHEALTH_NAME":            "app",
+		"DEPHEALTH_GROUP":            "test",
 		"DEPHEALTH_DEPS":            "rpc:grpc",
 		"DEPHEALTH_RPC_HOST":        "grpc.svc",
 		"DEPHEALTH_RPC_PORT":        "443",
@@ -744,6 +825,7 @@ func TestLoad_Auth_GRPCBasicAuth(t *testing.T) {
 func TestLoad_Auth_GRPCMetadata(t *testing.T) {
 	setEnvs(t, map[string]string{
 		"DEPHEALTH_NAME":          "app",
+		"DEPHEALTH_GROUP":          "test",
 		"DEPHEALTH_DEPS":          "rpc:grpc",
 		"DEPHEALTH_RPC_HOST":      "grpc.svc",
 		"DEPHEALTH_RPC_PORT":      "443",
@@ -772,6 +854,7 @@ func TestLoad_Auth_BearerTokenFromFile(t *testing.T) {
 	os.Unsetenv("DEPHEALTH_API_BEARER_TOKEN")
 	setEnvs(t, map[string]string{
 		"DEPHEALTH_NAME":                  "app",
+		"DEPHEALTH_GROUP":                  "test",
 		"DEPHEALTH_DEPS":                  "api:http",
 		"DEPHEALTH_API_URL":               "http://api.svc:8080",
 		"DEPHEALTH_API_CRITICAL":          "yes",
@@ -796,6 +879,7 @@ func TestLoad_Auth_BasicPassFromFile(t *testing.T) {
 	os.Unsetenv("DEPHEALTH_API_BASIC_PASS")
 	setEnvs(t, map[string]string{
 		"DEPHEALTH_NAME":                "app",
+		"DEPHEALTH_GROUP":                "test",
 		"DEPHEALTH_DEPS":                "api:http",
 		"DEPHEALTH_API_URL":             "http://api.svc:8080",
 		"DEPHEALTH_API_CRITICAL":        "yes",
@@ -818,6 +902,7 @@ func TestLoad_Auth_BasicPassFromFile(t *testing.T) {
 func TestLoad_Auth_ConflictBearerAndBasic(t *testing.T) {
 	setEnvs(t, map[string]string{
 		"DEPHEALTH_NAME":             "app",
+		"DEPHEALTH_GROUP":             "test",
 		"DEPHEALTH_DEPS":             "api:http",
 		"DEPHEALTH_API_URL":          "http://api.svc:8080",
 		"DEPHEALTH_API_CRITICAL":     "yes",
@@ -840,6 +925,7 @@ func TestLoad_Auth_IncompleteBasic_NoPass(t *testing.T) {
 	os.Unsetenv("DEPHEALTH_API_BASIC_PASS_FILE")
 	setEnvs(t, map[string]string{
 		"DEPHEALTH_NAME":            "app",
+		"DEPHEALTH_GROUP":            "test",
 		"DEPHEALTH_DEPS":            "api:http",
 		"DEPHEALTH_API_URL":         "http://api.svc:8080",
 		"DEPHEALTH_API_CRITICAL":    "yes",
@@ -859,6 +945,7 @@ func TestLoad_Auth_IncompleteBasic_NoUser(t *testing.T) {
 	os.Unsetenv("DEPHEALTH_API_BASIC_USER")
 	setEnvs(t, map[string]string{
 		"DEPHEALTH_NAME":            "app",
+		"DEPHEALTH_GROUP":            "test",
 		"DEPHEALTH_DEPS":            "api:http",
 		"DEPHEALTH_API_URL":         "http://api.svc:8080",
 		"DEPHEALTH_API_CRITICAL":    "yes",
@@ -877,6 +964,7 @@ func TestLoad_Auth_IncompleteBasic_NoUser(t *testing.T) {
 func TestLoad_Auth_HeadersOnGRPC(t *testing.T) {
 	setEnvs(t, map[string]string{
 		"DEPHEALTH_NAME":          "app",
+		"DEPHEALTH_GROUP":          "test",
 		"DEPHEALTH_DEPS":          "rpc:grpc",
 		"DEPHEALTH_RPC_HOST":      "grpc.svc",
 		"DEPHEALTH_RPC_PORT":      "443",
@@ -896,6 +984,7 @@ func TestLoad_Auth_HeadersOnGRPC(t *testing.T) {
 func TestLoad_Auth_MetadataOnHTTP(t *testing.T) {
 	setEnvs(t, map[string]string{
 		"DEPHEALTH_NAME":          "app",
+		"DEPHEALTH_GROUP":          "test",
 		"DEPHEALTH_DEPS":          "api:http",
 		"DEPHEALTH_API_URL":       "http://api.svc:8080",
 		"DEPHEALTH_API_CRITICAL":  "yes",
@@ -914,6 +1003,7 @@ func TestLoad_Auth_MetadataOnHTTP(t *testing.T) {
 func TestLoad_Auth_InvalidHeadersJSON(t *testing.T) {
 	setEnvs(t, map[string]string{
 		"DEPHEALTH_NAME":          "app",
+		"DEPHEALTH_GROUP":          "test",
 		"DEPHEALTH_DEPS":          "api:http",
 		"DEPHEALTH_API_URL":       "http://api.svc:8080",
 		"DEPHEALTH_API_CRITICAL":  "yes",
@@ -929,6 +1019,7 @@ func TestLoad_Auth_InvalidHeadersJSON(t *testing.T) {
 func TestLoad_Auth_InvalidMetadataJSON(t *testing.T) {
 	setEnvs(t, map[string]string{
 		"DEPHEALTH_NAME":          "app",
+		"DEPHEALTH_GROUP":          "test",
 		"DEPHEALTH_DEPS":          "rpc:grpc",
 		"DEPHEALTH_RPC_HOST":      "grpc.svc",
 		"DEPHEALTH_RPC_PORT":      "443",
@@ -949,6 +1040,7 @@ func TestLoad_Auth_BothVarAndFile(t *testing.T) {
 
 	setEnvs(t, map[string]string{
 		"DEPHEALTH_NAME":                  "app",
+		"DEPHEALTH_GROUP":                  "test",
 		"DEPHEALTH_DEPS":                  "api:http",
 		"DEPHEALTH_API_URL":               "http://api.svc:8080",
 		"DEPHEALTH_API_CRITICAL":          "yes",
@@ -969,6 +1061,7 @@ func TestLoad_Auth_GlobalBearerApplied(t *testing.T) {
 	os.Unsetenv("DEPHEALTH_API_BEARER_TOKEN_FILE")
 	setEnvs(t, map[string]string{
 		"DEPHEALTH_NAME":          "app",
+		"DEPHEALTH_GROUP":          "test",
 		"DEPHEALTH_DEPS":          "api:http",
 		"DEPHEALTH_API_URL":       "http://api.svc:8080",
 		"DEPHEALTH_API_CRITICAL":  "yes",
@@ -988,6 +1081,7 @@ func TestLoad_Auth_GlobalBearerApplied(t *testing.T) {
 func TestLoad_Auth_PerDepOverridesGlobal(t *testing.T) {
 	setEnvs(t, map[string]string{
 		"DEPHEALTH_NAME":             "app",
+		"DEPHEALTH_GROUP":             "test",
 		"DEPHEALTH_DEPS":             "api:http",
 		"DEPHEALTH_API_URL":          "http://api.svc:8080",
 		"DEPHEALTH_API_CRITICAL":     "yes",
@@ -1011,6 +1105,7 @@ func TestLoad_Auth_GlobalBasicAuthApplied(t *testing.T) {
 	os.Unsetenv("DEPHEALTH_API_BASIC_PASS_FILE")
 	setEnvs(t, map[string]string{
 		"DEPHEALTH_NAME":          "app",
+		"DEPHEALTH_GROUP":          "test",
 		"DEPHEALTH_DEPS":          "api:http",
 		"DEPHEALTH_API_URL":       "http://api.svc:8080",
 		"DEPHEALTH_API_CRITICAL":  "yes",
@@ -1034,6 +1129,7 @@ func TestLoad_Auth_GlobalHeadersHTTPOnly(t *testing.T) {
 	os.Unsetenv("DEPHEALTH_RPC_HEADERS")
 	setEnvs(t, map[string]string{
 		"DEPHEALTH_NAME":          "app",
+		"DEPHEALTH_GROUP":          "test",
 		"DEPHEALTH_DEPS":          "api:http,rpc:grpc",
 		"DEPHEALTH_API_URL":       "http://api.svc:8080",
 		"DEPHEALTH_API_CRITICAL":  "yes",
@@ -1064,6 +1160,7 @@ func TestLoad_Auth_GlobalMetadataGRPCOnly(t *testing.T) {
 	os.Unsetenv("DEPHEALTH_RPC_METADATA")
 	setEnvs(t, map[string]string{
 		"DEPHEALTH_NAME":          "app",
+		"DEPHEALTH_GROUP":          "test",
 		"DEPHEALTH_DEPS":          "api:http,rpc:grpc",
 		"DEPHEALTH_API_URL":       "http://api.svc:8080",
 		"DEPHEALTH_API_CRITICAL":  "yes",
@@ -1095,6 +1192,7 @@ func TestLoad_Auth_PerDepBearerClearsGlobalBasic(t *testing.T) {
 	os.Unsetenv("DEPHEALTH_API_BASIC_PASS_FILE")
 	setEnvs(t, map[string]string{
 		"DEPHEALTH_NAME":             "app",
+		"DEPHEALTH_GROUP":             "test",
 		"DEPHEALTH_DEPS":             "api:http",
 		"DEPHEALTH_API_URL":          "http://api.svc:8080",
 		"DEPHEALTH_API_CRITICAL":     "yes",
@@ -1121,6 +1219,7 @@ func TestLoad_Auth_PerDepBasicClearsGlobalBearer(t *testing.T) {
 	os.Unsetenv("DEPHEALTH_API_BEARER_TOKEN_FILE")
 	setEnvs(t, map[string]string{
 		"DEPHEALTH_NAME":            "app",
+		"DEPHEALTH_GROUP":            "test",
 		"DEPHEALTH_DEPS":            "api:http",
 		"DEPHEALTH_API_URL":         "http://api.svc:8080",
 		"DEPHEALTH_API_CRITICAL":    "yes",
@@ -1153,6 +1252,7 @@ func TestLoad_Auth_GlobalBearerTokenFromFile(t *testing.T) {
 	os.Unsetenv("DEPHEALTH_API_BEARER_TOKEN_FILE")
 	setEnvs(t, map[string]string{
 		"DEPHEALTH_NAME":               "app",
+		"DEPHEALTH_GROUP":               "test",
 		"DEPHEALTH_DEPS":               "api:http",
 		"DEPHEALTH_API_URL":            "http://api.svc:8080",
 		"DEPHEALTH_API_CRITICAL":       "yes",
@@ -1172,6 +1272,7 @@ func TestLoad_Auth_GlobalBearerTokenFromFile(t *testing.T) {
 func TestLoad_Auth_InvalidGlobalHeadersJSON(t *testing.T) {
 	setEnvs(t, map[string]string{
 		"DEPHEALTH_NAME":     "app",
+		"DEPHEALTH_GROUP":     "test",
 		"DEPHEALTH_HEADERS":  `{bad`,
 	})
 
@@ -1184,6 +1285,7 @@ func TestLoad_Auth_InvalidGlobalHeadersJSON(t *testing.T) {
 func TestLoad_Auth_InvalidGlobalMetadataJSON(t *testing.T) {
 	setEnvs(t, map[string]string{
 		"DEPHEALTH_NAME":     "app",
+		"DEPHEALTH_GROUP":     "test",
 		"DEPHEALTH_METADATA": `[not-an-object]`,
 	})
 
@@ -1200,6 +1302,7 @@ func TestLoad_Auth_GlobalBothTokenAndFile(t *testing.T) {
 
 	setEnvs(t, map[string]string{
 		"DEPHEALTH_NAME":              "app",
+		"DEPHEALTH_GROUP":              "test",
 		"DEPHEALTH_BEARER_TOKEN":      "inline",
 		"DEPHEALTH_BEARER_TOKEN_FILE": tokenPath,
 	})
@@ -1271,6 +1374,7 @@ func TestEnvName(t *testing.T) {
 func TestLoad_ConfigFile_FullYAML(t *testing.T) {
 	yamlContent := `
 name: yaml-app
+group: test
 listenAddr: ":9090"
 log:
   format: json
@@ -1324,6 +1428,7 @@ dependencies:
 func TestLoad_ConfigFile_EnvOverridesYAML(t *testing.T) {
 	yamlContent := `
 name: yaml-name
+group: test
 listenAddr: ":9090"
 log:
   format: text
@@ -1334,6 +1439,7 @@ checkInterval: "30s"
 	setEnvs(t, map[string]string{
 		"CONFIG_FILE":            path,
 		"DEPHEALTH_NAME":        "env-name",
+		"DEPHEALTH_GROUP":        "test",
 		"LISTEN_ADDR":           ":7070",
 		"LOG_FORMAT":            "json",
 		"LOG_LEVEL":             "warn",
@@ -1365,6 +1471,7 @@ checkInterval: "30s"
 func TestLoad_ConfigFile_EnvDepsReplaceYAMLDeps(t *testing.T) {
 	yamlContent := `
 name: yaml-app
+group: test
 dependencies:
   - name: yaml-svc
     type: http
@@ -1400,6 +1507,7 @@ dependencies:
 func TestLoad_ConfigFile_PerDepAuthOverlayOnYAMLDeps(t *testing.T) {
 	yamlContent := `
 name: yaml-app
+group: test
 dependencies:
   - name: api
     type: http
@@ -1434,6 +1542,7 @@ func TestLoad_NoConfigFile_Regression(t *testing.T) {
 	os.Unsetenv("CONFIG_FILE")
 	setEnvs(t, map[string]string{
 		"DEPHEALTH_NAME":         "regression-app",
+		"DEPHEALTH_GROUP":         "test",
 		"DEPHEALTH_DEPS":         "svc:http",
 		"DEPHEALTH_SVC_URL":      "http://svc:80",
 		"DEPHEALTH_SVC_CRITICAL": "yes",
@@ -1460,6 +1569,7 @@ func TestLoad_NoConfigFile_Regression(t *testing.T) {
 func TestLoad_ConfigFile_NotFound(t *testing.T) {
 	t.Setenv("CONFIG_FILE", "/nonexistent/config.yaml")
 	t.Setenv("DEPHEALTH_NAME", "app")
+	t.Setenv("DEPHEALTH_GROUP", "test")
 
 	_, err := Load()
 	if err == nil {
@@ -1474,6 +1584,7 @@ func TestLoad_ConfigFile_YAMLDefaults(t *testing.T) {
 	// YAML with only name — defaults should be applied.
 	yamlContent := `
 name: minimal-yaml
+group: test
 `
 	path := writeTestYAML(t, yamlContent)
 	os.Unsetenv("DEPHEALTH_DEPS")
@@ -1593,6 +1704,7 @@ func TestResolveZone_UnknownZone(t *testing.T) {
 func TestLoad_ServerAuth_BearerEnv(t *testing.T) {
 	setEnvs(t, map[string]string{
 		"DEPHEALTH_NAME": "test-app",
+		"DEPHEALTH_GROUP": "test",
 		"DEPHEALTH_DEPS": "svc:http",
 		"DEPHEALTH_SVC_URL": "http://svc:8080",
 		"DEPHEALTH_SVC_CRITICAL": "yes",
@@ -1614,6 +1726,7 @@ func TestLoad_ServerAuth_BearerEnv(t *testing.T) {
 func TestLoad_ServerAuth_BasicEnv(t *testing.T) {
 	setEnvs(t, map[string]string{
 		"DEPHEALTH_NAME": "test-app",
+		"DEPHEALTH_GROUP": "test",
 		"DEPHEALTH_DEPS": "svc:http",
 		"DEPHEALTH_SVC_URL": "http://svc:8080",
 		"DEPHEALTH_SVC_CRITICAL": "yes",
@@ -1639,6 +1752,7 @@ func TestLoad_ServerAuth_BasicEnv(t *testing.T) {
 func TestLoad_ServerAuth_APIKeyEnv(t *testing.T) {
 	setEnvs(t, map[string]string{
 		"DEPHEALTH_NAME": "test-app",
+		"DEPHEALTH_GROUP": "test",
 		"DEPHEALTH_DEPS": "svc:http",
 		"DEPHEALTH_SVC_URL": "http://svc:8080",
 		"DEPHEALTH_SVC_CRITICAL": "yes",
@@ -1660,6 +1774,7 @@ func TestLoad_ServerAuth_APIKeyEnv(t *testing.T) {
 func TestLoad_ServerAuth_PerZoneEnv(t *testing.T) {
 	setEnvs(t, map[string]string{
 		"DEPHEALTH_NAME": "test-app",
+		"DEPHEALTH_GROUP": "test",
 		"DEPHEALTH_DEPS": "svc:http",
 		"DEPHEALTH_SVC_URL": "http://svc:8080",
 		"DEPHEALTH_SVC_CRITICAL": "yes",
@@ -1698,6 +1813,7 @@ func TestLoad_ServerAuth_TokenFromFile(t *testing.T) {
 
 	setEnvs(t, map[string]string{
 		"DEPHEALTH_NAME": "test-app",
+		"DEPHEALTH_GROUP": "test",
 		"DEPHEALTH_DEPS": "svc:http",
 		"DEPHEALTH_SVC_URL": "http://svc:8080",
 		"DEPHEALTH_SVC_CRITICAL": "yes",
@@ -1720,6 +1836,7 @@ func TestLoad_ServerAuth_PassFromFile(t *testing.T) {
 
 	setEnvs(t, map[string]string{
 		"DEPHEALTH_NAME": "test-app",
+		"DEPHEALTH_GROUP": "test",
 		"DEPHEALTH_DEPS": "svc:http",
 		"DEPHEALTH_SVC_URL": "http://svc:8080",
 		"DEPHEALTH_SVC_CRITICAL": "yes",
@@ -1743,6 +1860,7 @@ func TestLoad_ServerAuth_APIKeyFromFile(t *testing.T) {
 
 	setEnvs(t, map[string]string{
 		"DEPHEALTH_NAME": "test-app",
+		"DEPHEALTH_GROUP": "test",
 		"DEPHEALTH_DEPS": "svc:http",
 		"DEPHEALTH_SVC_URL": "http://svc:8080",
 		"DEPHEALTH_SVC_CRITICAL": "yes",
@@ -1765,6 +1883,7 @@ func TestLoad_ServerAuth_BothVarAndFile_Error(t *testing.T) {
 
 	setEnvs(t, map[string]string{
 		"DEPHEALTH_NAME": "test-app",
+		"DEPHEALTH_GROUP": "test",
 		"DEPHEALTH_DEPS": "svc:http",
 		"DEPHEALTH_SVC_URL": "http://svc:8080",
 		"DEPHEALTH_SVC_CRITICAL": "yes",
@@ -1781,6 +1900,7 @@ func TestLoad_ServerAuth_BothVarAndFile_Error(t *testing.T) {
 func TestLoad_ServerAuth_BasicMissingPass_Error(t *testing.T) {
 	setEnvs(t, map[string]string{
 		"DEPHEALTH_NAME": "test-app",
+		"DEPHEALTH_GROUP": "test",
 		"DEPHEALTH_DEPS": "svc:http",
 		"DEPHEALTH_SVC_URL": "http://svc:8080",
 		"DEPHEALTH_SVC_CRITICAL": "yes",
@@ -1796,6 +1916,7 @@ func TestLoad_ServerAuth_BasicMissingPass_Error(t *testing.T) {
 func TestLoad_ServerAuth_BasicMissingUser_Error(t *testing.T) {
 	setEnvs(t, map[string]string{
 		"DEPHEALTH_NAME": "test-app",
+		"DEPHEALTH_GROUP": "test",
 		"DEPHEALTH_DEPS": "svc:http",
 		"DEPHEALTH_SVC_URL": "http://svc:8080",
 		"DEPHEALTH_SVC_CRITICAL": "yes",
@@ -1811,6 +1932,7 @@ func TestLoad_ServerAuth_BasicMissingUser_Error(t *testing.T) {
 func TestLoad_ServerAuth_BearerMissingToken_Error(t *testing.T) {
 	setEnvs(t, map[string]string{
 		"DEPHEALTH_NAME": "test-app",
+		"DEPHEALTH_GROUP": "test",
 		"DEPHEALTH_DEPS": "svc:http",
 		"DEPHEALTH_SVC_URL": "http://svc:8080",
 		"DEPHEALTH_SVC_CRITICAL": "yes",
@@ -1825,6 +1947,7 @@ func TestLoad_ServerAuth_BearerMissingToken_Error(t *testing.T) {
 func TestLoad_ServerAuth_APIKeyMissing_Error(t *testing.T) {
 	setEnvs(t, map[string]string{
 		"DEPHEALTH_NAME": "test-app",
+		"DEPHEALTH_GROUP": "test",
 		"DEPHEALTH_DEPS": "svc:http",
 		"DEPHEALTH_SVC_URL": "http://svc:8080",
 		"DEPHEALTH_SVC_CRITICAL": "yes",
@@ -1839,6 +1962,7 @@ func TestLoad_ServerAuth_APIKeyMissing_Error(t *testing.T) {
 func TestLoad_ServerAuth_UnknownMethod_Error(t *testing.T) {
 	setEnvs(t, map[string]string{
 		"DEPHEALTH_NAME": "test-app",
+		"DEPHEALTH_GROUP": "test",
 		"DEPHEALTH_DEPS": "svc:http",
 		"DEPHEALTH_SVC_URL": "http://svc:8080",
 		"DEPHEALTH_SVC_CRITICAL": "yes",
@@ -1853,6 +1977,7 @@ func TestLoad_ServerAuth_UnknownMethod_Error(t *testing.T) {
 func TestLoad_ServerAuth_NoAuthVars_DefaultNone(t *testing.T) {
 	setEnvs(t, map[string]string{
 		"DEPHEALTH_NAME": "test-app",
+		"DEPHEALTH_GROUP": "test",
 		"DEPHEALTH_DEPS": "svc:http",
 		"DEPHEALTH_SVC_URL": "http://svc:8080",
 		"DEPHEALTH_SVC_CRITICAL": "yes",
@@ -1869,6 +1994,7 @@ func TestLoad_ServerAuth_NoAuthVars_DefaultNone(t *testing.T) {
 func TestLoad_ServerAuth_YAMLAuth(t *testing.T) {
 	yamlContent := `
 name: yaml-auth
+group: test
 auth:
   method: bearer
   token: yaml-token
@@ -1920,6 +2046,7 @@ dependencies:
 func TestLoad_ServerAuth_YAMLWithEnvOverride(t *testing.T) {
 	yamlContent := `
 name: yaml-auth
+group: test
 auth:
   method: bearer
   token: yaml-token
@@ -1966,6 +2093,7 @@ dependencies:
 func TestLoad_ServerAuth_GlobalBearerZoneMetricsNone(t *testing.T) {
 	setEnvs(t, map[string]string{
 		"DEPHEALTH_NAME": "test-app",
+		"DEPHEALTH_GROUP": "test",
 		"DEPHEALTH_DEPS": "svc:http",
 		"DEPHEALTH_SVC_URL": "http://svc:8080",
 		"DEPHEALTH_SVC_CRITICAL": "yes",
@@ -2001,6 +2129,7 @@ func TestLoad_ServerAuth_PerZoneTokenFromFile(t *testing.T) {
 
 	setEnvs(t, map[string]string{
 		"DEPHEALTH_NAME": "test-app",
+		"DEPHEALTH_GROUP": "test",
 		"DEPHEALTH_DEPS": "svc:http",
 		"DEPHEALTH_SVC_URL": "http://svc:8080",
 		"DEPHEALTH_SVC_CRITICAL": "yes",
@@ -2026,6 +2155,7 @@ func TestLoad_ServerAuth_YAMLZoneWithEnvOverlay(t *testing.T) {
 	// Env overrides only the password — other fields should stay from YAML.
 	yamlContent := `
 name: yaml-overlay
+group: test
 auth:
   method: bearer
   token: global-token
@@ -2080,6 +2210,7 @@ dependencies:
 func TestLoad_ServerAuth_EnvGlobalOverridesYAMLGlobal(t *testing.T) {
 	yamlContent := `
 name: yaml-global
+group: test
 auth:
   method: basic
   username: yaml-user

@@ -34,6 +34,7 @@ func main() {
 
 	slog.Info("config loaded",
 		"name", cfg.Name,
+		"group", cfg.Group,
 		"listen", cfg.ListenAddr,
 		"dependencies", len(cfg.Dependencies),
 		"checkInterval", cfg.CheckInterval,
@@ -49,7 +50,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	dh, err := dephealth.New(cfg.Name, opts...)
+	dh, err := dephealth.New(cfg.Name, cfg.Group, opts...)
 	if err != nil {
 		slog.Error("failed to create dephealth", "error", err)
 		os.Exit(1)

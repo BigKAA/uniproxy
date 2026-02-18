@@ -14,6 +14,7 @@ import (
 // Config is the top-level application configuration.
 type Config struct {
 	Name          string
+	Group         string // logical group for metrics label
 	ListenAddr    string
 	Log           LogConfig
 	Auth          AuthConfig
@@ -193,6 +194,11 @@ func applyEnvOverrides(cfg *Config) error {
 		cfg.Name = v
 	}
 
+	// Application group.
+	if v := os.Getenv("DEPHEALTH_GROUP"); v != "" {
+		cfg.Group = v
+	}
+
 	// Check interval.
 	if v := os.Getenv("DEPHEALTH_CHECK_INTERVAL"); v != "" {
 		sec, err := strconv.ParseFloat(v, 64)
@@ -314,6 +320,10 @@ func applyDefaults(cfg *Config) {
 func validate(cfg *Config) error {
 	if cfg.Name == "" {
 		return fmt.Errorf("DEPHEALTH_NAME is required")
+	}
+
+	if cfg.Group == "" {
+		return fmt.Errorf("DEPHEALTH_GROUP is required")
 	}
 
 	if err := validateLogConfig(&cfg.Log); err != nil {

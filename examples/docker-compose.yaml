@@ -8,13 +8,14 @@
 
 services:
   uniproxy:
-    image: harbor.kryukov.lan/library/uniproxy:v0.5.0
+    image: harbor.kryukov.lan/library/uniproxy:v0.6.0
     # Build from source (uncomment to use local code):
     # build: ../..
     ports:
       - "8080:8080"
     environment:
       DEPHEALTH_NAME: demo-proxy
+      DEPHEALTH_GROUP: demo
       DEPHEALTH_DEPS: "redis:redis,postgres:postgres"
       DEPHEALTH_REDIS_URL: "redis://redis:6379"
       DEPHEALTH_REDIS_CRITICAL: "yes"

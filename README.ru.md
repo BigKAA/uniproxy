@@ -35,6 +35,7 @@ docker build -t uniproxy:0.5.0 .
 # Запуск с HTTP-зависимостью
 docker run -p 8080:8080 \
   -e DEPHEALTH_NAME=my-proxy \
+  -e DEPHEALTH_GROUP=my-group \
   -e DEPHEALTH_DEPS="httpbin:http" \
   -e DEPHEALTH_HTTPBIN_URL="http://httpbin.org" \
   -e DEPHEALTH_HTTPBIN_CRITICAL=yes \
@@ -110,6 +111,7 @@ docker run -p 8080:8080 \
 
 ```yaml
 name: my-proxy
+group: my-group
 listenAddr: ":8080"
 checkInterval: "15s"
 fetchTimeout: "3s"
@@ -151,6 +153,7 @@ dependencies:
 |------------|:------------:|:------------:|----------|
 | `CONFIG_FILE` | Нет | — | Путь к YAML-файлу конфигурации |
 | `DEPHEALTH_NAME` | Да | — | Имя приложения (используется в метриках и ответах) |
+| `DEPHEALTH_GROUP` | Да | — | Логическая группа для метки Prometheus |
 | `DEPHEALTH_DEPS` | Нет | — | Список зависимостей через запятую: `имя1:тип1,имя2:тип2` |
 | `LISTEN_ADDR` | Нет | `:8080` | Адрес HTTP-сервера |
 | `LOG_FORMAT` | Нет | `text` | Формат вывода логов: `text` или `json` |
@@ -240,6 +243,7 @@ uniproxy поддерживает серверную аутентификаци�
 # Защитить API статуса bearer-токеном, метрики оставить открытыми
 docker run -p 8080:8080 \
   -e DEPHEALTH_NAME=my-proxy \
+  -e DEPHEALTH_GROUP=my-group \
   -e DEPHEALTH_DEPS="httpbin:http" \
   -e DEPHEALTH_HTTPBIN_URL="http://httpbin.org" \
   -e DEPHEALTH_HTTPBIN_CRITICAL=yes \
@@ -324,6 +328,7 @@ uniproxy поддерживает аутентификацию для HTTP и gR
 ```bash
 docker run -p 8080:8080 \
   -e DEPHEALTH_NAME=auth-proxy \
+  -e DEPHEALTH_GROUP=my-group \
   -e DEPHEALTH_DEPS="secure-api:http,grpc-svc:grpc" \
   -e DEPHEALTH_SECURE_API_URL="https://api.example.com" \
   -e DEPHEALTH_SECURE_API_CRITICAL=yes \
@@ -345,6 +350,7 @@ docker run -p 8080:8080 \
 ```bash
 docker run -p 8080:8080 \
   -e DEPHEALTH_NAME=frontend \
+  -e DEPHEALTH_GROUP=my-group \
   -e DEPHEALTH_CHECK_INTERVAL=15 \
   -e DEPHEALTH_FETCH_TIMEOUT=3 \
   -e DEPHEALTH_DEPS="backend:http,cache:redis,db:postgres" \
@@ -461,7 +467,7 @@ dephealth SDK экспортирует следующие метрики Prometh
 | `app_dependency_status` | Gauge | Категория результата последней проверки (enum-паттерн — ровно одно значение status установлено в 1, остальные в 0) |
 | `app_dependency_status_detail` | Gauge | Детальная причина результата последней проверки (state-set паттерн — всегда 1 с меткой detail) |
 
-**Базовые метки** (все метрики): `name`, `dependency`, `type`, `host`, `port`, `critical`
+**Базовые метки** (все метрики): `name`, `group`, `dependency`, `type`, `host`, `port`, `critical`
 
 Дополнительные метки:
 - `app_dependency_status` добавляет метку **`status`** с возможными значениями: `ok`, `timeout`, `connection_error`, `dns_error`, `auth_error`, `tls_error`, `unhealthy`, `error`
@@ -584,6 +590,7 @@ gateway:
 | `image.repository` | `harbor.kryukov.lan/library/uniproxy` | Репозиторий образа |
 | `image.tag` | `""` (appVersion) | Тег образа |
 | `config.name` | `""` (имя релиза) | `DEPHEALTH_NAME` — имя приложения |
+| `config.group` | `""` | `DEPHEALTH_GROUP` — логическая группа |
 | `config.listenAddr` | `":8080"` | `LISTEN_ADDR` |
 | `config.checkInterval` | `"10"` | `DEPHEALTH_CHECK_INTERVAL` |
 | `config.timeout` | `""` | `DEPHEALTH_TIMEOUT` |

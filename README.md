@@ -35,6 +35,7 @@ docker build -t uniproxy:0.5.0 .
 # Run with an HTTP dependency
 docker run -p 8080:8080 \
   -e DEPHEALTH_NAME=my-proxy \
+  -e DEPHEALTH_GROUP=my-group \
   -e DEPHEALTH_DEPS="httpbin:http" \
   -e DEPHEALTH_HTTPBIN_URL="http://httpbin.org" \
   -e DEPHEALTH_HTTPBIN_CRITICAL=yes \
@@ -110,6 +111,7 @@ Example YAML file:
 
 ```yaml
 name: my-proxy
+group: my-group
 listenAddr: ":8080"
 checkInterval: "15s"
 fetchTimeout: "3s"
@@ -151,6 +153,7 @@ See [examples/config.yaml](./examples/config.yaml) for a full example with all f
 |----------|:--------:|:-------:|-------------|
 | `CONFIG_FILE` | No | — | Path to YAML configuration file |
 | `DEPHEALTH_NAME` | Yes | — | Application name (used in metrics and status response) |
+| `DEPHEALTH_GROUP` | Yes | — | Logical group for Prometheus metrics label |
 | `DEPHEALTH_DEPS` | No | — | Comma-separated dependency list: `name1:type1,name2:type2` |
 | `LISTEN_ADDR` | No | `:8080` | HTTP server listen address |
 | `LOG_FORMAT` | No | `text` | Log output format: `text` or `json` |
@@ -240,6 +243,7 @@ All `_PASS`, `_TOKEN`, and `_API_KEY` variables support the `_FILE` suffix patte
 # Protect status API with bearer token, leave metrics open
 docker run -p 8080:8080 \
   -e DEPHEALTH_NAME=my-proxy \
+  -e DEPHEALTH_GROUP=my-group \
   -e DEPHEALTH_DEPS="httpbin:http" \
   -e DEPHEALTH_HTTPBIN_URL="http://httpbin.org" \
   -e DEPHEALTH_HTTPBIN_CRITICAL=yes \
@@ -324,6 +328,7 @@ Rules:
 ```bash
 docker run -p 8080:8080 \
   -e DEPHEALTH_NAME=auth-proxy \
+  -e DEPHEALTH_GROUP=my-group \
   -e DEPHEALTH_DEPS="secure-api:http,grpc-svc:grpc" \
   -e DEPHEALTH_SECURE_API_URL="https://api.example.com" \
   -e DEPHEALTH_SECURE_API_CRITICAL=yes \
@@ -345,6 +350,7 @@ docker run -p 8080:8080 \
 ```bash
 docker run -p 8080:8080 \
   -e DEPHEALTH_NAME=frontend \
+  -e DEPHEALTH_GROUP=my-group \
   -e DEPHEALTH_CHECK_INTERVAL=15 \
   -e DEPHEALTH_FETCH_TIMEOUT=3 \
   -e DEPHEALTH_DEPS="backend:http,cache:redis,db:postgres" \
@@ -461,7 +467,7 @@ dephealth SDK exports the following Prometheus metrics:
 | `app_dependency_status` | Gauge | Category of the last check result (enum pattern — exactly one status value is set to 1, the rest to 0) |
 | `app_dependency_status_detail` | Gauge | Detailed reason of the last check result (state-set pattern — always 1 with detail label) |
 
-**Base labels** (all metrics): `name`, `dependency`, `type`, `host`, `port`, `critical`
+**Base labels** (all metrics): `name`, `group`, `dependency`, `type`, `host`, `port`, `critical`
 
 Additional labels per metric:
 - `app_dependency_status` adds label **`status`** with possible values: `ok`, `timeout`, `connection_error`, `dns_error`, `auth_error`, `tls_error`, `unhealthy`, `error`
@@ -584,6 +590,7 @@ gateway:
 | `image.repository` | `harbor.kryukov.lan/library/uniproxy` | Image repository |
 | `image.tag` | `""` (appVersion) | Image tag |
 | `config.name` | `""` (release name) | `DEPHEALTH_NAME` — application name |
+| `config.group` | `""` | `DEPHEALTH_GROUP` — logical group for metrics label |
 | `config.listenAddr` | `":8080"` | `LISTEN_ADDR` |
 | `config.checkInterval` | `"10"` | `DEPHEALTH_CHECK_INTERVAL` |
 | `config.timeout` | `""` | `DEPHEALTH_TIMEOUT` |

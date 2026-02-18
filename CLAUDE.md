@@ -48,6 +48,7 @@ docker build -t uniproxy:dev .
 # Run with test configuration
 docker run -p 8080:8080 -p 9090:9090 \
   -e DEPHEALTH_NAME=test-proxy \
+  -e DEPHEALTH_GROUP=test \
   -e DEPHEALTH_DEPS="httpbin:http" \
   -e DEPHEALTH_HTTPBIN_URL="http://httpbin.org" \
   -e DEPHEALTH_HTTPBIN_CRITICAL="yes" \
@@ -144,7 +145,7 @@ helm lint ./deploy/helm/uniproxy
 
 **internal/config/config.go**
 - Parses environment variables into `Config` struct
-- Required vars: `DEPHEALTH_NAME`, `DEPHEALTH_DEPS`
+- Required vars: `DEPHEALTH_NAME`, `DEPHEALTH_GROUP`, `DEPHEALTH_DEPS`
 - Optional: `LISTEN_ADDR`, `LOG_LEVEL`, `DEPHEALTH_CHECK_INTERVAL`
 - Per-dependency vars: `DEPHEALTH_<NAME>_URL` or `DEPHEALTH_<NAME>_HOST` + `DEPHEALTH_<NAME>_PORT`
 - Dependency types: `http`, `redis`, `postgres`, `grpc`
@@ -258,7 +259,7 @@ When working on dephealth SDK integration, the SDK source is available locally f
 ### Check Configuration Parsing
 ```bash
 # Run with debug logging
-docker run -e LOG_LEVEL=debug -e DEPHEALTH_NAME=test ... uniproxy:dev
+docker run -e LOG_LEVEL=debug -e DEPHEALTH_NAME=test -e DEPHEALTH_GROUP=test ... uniproxy:dev
 ```
 
 ### Verify Health Checks
@@ -281,6 +282,7 @@ kubectl port-forward -n <namespace> deployment/<release-name> 8080:8080 9090:909
 
 ### Common Issues
 - **"DEPHEALTH_NAME is required"**: Missing required env var
+- **"DEPHEALTH_GROUP is required"**: Missing required env var
 - **"unsupported dependency type"**: Check `DEPHEALTH_DEPS` format (name:type)
 - **Health check always DOWN**: Verify connectivity from container/pod to target host
 - **Metrics not updating**: Check `DEPHEALTH_CHECK_INTERVAL` and SDK logs

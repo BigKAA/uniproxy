@@ -1,5 +1,6 @@
 instances:
   - name: uniproxy-01
+    group: ns1
     replicas: 2
     nodePort: 30080
     connections:
@@ -15,6 +16,7 @@ instances:
         healthPath: "/"
 
   - name: uniproxy-02
+    group: ns1
     replicas: 2
     connections:
       - name: redis
@@ -33,6 +35,7 @@ instances:
         healthPath: "/"
 
   - name: uniproxy-03
+    group: ns1
     replicas: 3
     connections:
       - name: postgresql

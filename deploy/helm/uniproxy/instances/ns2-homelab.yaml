@@ -1,5 +1,6 @@
 instances:
   - name: uniproxy-04
+    group: ns2
     replicas: 2
     connections:
       - name: uniproxy-05
@@ -14,10 +15,12 @@ instances:
         healthPath: "/"
 
   - name: uniproxy-05
+    group: ns2
     replicas: 1
     connections: []
 
   - name: uniproxy-06
+    group: ns2
     replicas: 2
     connections:
       - name: uniproxy-07
@@ -32,6 +35,7 @@ instances:
         healthPath: "/"
 
   - name: uniproxy-07
+    group: ns2
     replicas: 1
     connections:
       - name: postgresql
@@ -40,6 +44,7 @@ instances:
         critical: "yes"
 
   - name: uniproxy-08
+    group: ns2
     replicas: 1
     connections:
       - name: postgresql

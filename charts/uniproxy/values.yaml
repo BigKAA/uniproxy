@@ -19,6 +19,8 @@ fullnameOverride: ""
 config:
   # DEPHEALTH_NAME (required). Defaults to release name if empty.
   name: ""
+  # DEPHEALTH_GROUP (required). Logical group for metrics label.
+  group: ""
   # LISTEN_ADDR
   listenAddr: ":8080"
   # DEPHEALTH_CHECK_INTERVAL (seconds or Go duration)

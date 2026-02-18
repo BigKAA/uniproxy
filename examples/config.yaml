@@ -2,13 +2,17 @@
 #
 # Usage:
 #   docker run -e CONFIG_FILE=/config/config.yaml \
-#     -v ./config.yaml:/config/config.yaml:ro uniproxy:0.5.0
+#     -v ./config.yaml:/config/config.yaml:ro uniproxy:0.6.0
 #
 # Environment variables always override YAML values.
 # See README.md for details on priority rules.
 
 # Application name (required). Used in metrics labels and status API responses.
 name: my-proxy
+
+# Logical group (required). Added to all Prometheus metrics as the "group" label.
+# Useful for grouping instances by team, environment, or service tier.
+group: my-group
 
 # HTTP server listen address.
 listenAddr: ":8080"

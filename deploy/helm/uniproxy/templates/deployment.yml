@@ -34,6 +34,8 @@ spec:
           env:
             - name: DEPHEALTH_NAME
               value: {{ .name | quote }}
+            - name: DEPHEALTH_GROUP
+              value: {{ .group | quote }}
             - name: LISTEN_ADDR
               value: ":8080"
             - name: DEPHEALTH_CHECK_INTERVAL
