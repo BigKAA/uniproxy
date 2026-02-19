@@ -8,7 +8,7 @@
 
 services:
   uniproxy:
-    image: harbor.kryukov.lan/library/uniproxy:v0.6.0
+    image: container-registry.cloud.yandex.net/crpklna5l8v5m7c0ipst/uniproxy:v0.6.0
     # Build from source (uncomment to use local code):
     # build: ../..
     ports:
@@ -36,7 +36,7 @@ services:
         condition: service_healthy
 
   redis:
-    image: harbor.kryukov.lan/docker/library/redis:7-alpine
+    image: redis:7-alpine
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -44,7 +44,7 @@ services:
       retries: 3
 
   postgres:
-    image: harbor.kryukov.lan/docker/library/postgres:16-alpine
+    image: postgres:16-alpine
     environment:
       POSTGRES_USER: demo
       POSTGRES_PASSWORD: demo

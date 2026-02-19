@@ -587,7 +587,7 @@ gateway:
 | Параметр | По умолчанию | Описание |
 |----------|:------------:|----------|
 | `replicaCount` | `1` | Количество реплик |
-| `image.repository` | `harbor.kryukov.lan/library/uniproxy` | Репозиторий образа |
+| `image.repository` | `container-registry.cloud.yandex.net/crpklna5l8v5m7c0ipst/uniproxy` | Репозиторий образа |
 | `image.tag` | `""` (appVersion) | Тег образа |
 | `config.name` | `""` (имя релиза) | `DEPHEALTH_NAME` — имя приложения |
 | `config.group` | `""` | `DEPHEALTH_GROUP` — логическая группа |

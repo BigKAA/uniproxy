@@ -28,9 +28,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Test domains: `test1.kryukov.lan`, `test2.kryukov.lan`, `test3.kryukov.lan` → `192.168.218.180` (Gateway API)
 - Local DNS: `192.168.218.9`
 
-### Container Registry
-Harbor: `https://harbor.kryukov.lan`
-- Public storage: `harbor.kryukov.lan/library` (use for local images)
+### Container Registries
+
+**Release registry (Yandex Container Registry):**
+- `container-registry.cloud.yandex.net/crpklna5l8v5m7c0ipst` — release images
+- Authentication via `yc` credential helper (configured in `~/.docker/config.json`)
+- Use for all documentation examples and Helm chart defaults
+
+**Development registry (Harbor):**
+- `harbor.kryukov.lan/library` — dev/test images (homelab only)
 - Docker Hub proxy: `harbor.kryukov.lan/docker`
 - MCR proxy: `harbor.kryukov.lan/mcr`
 - Admin credentials: `admin` / `password`

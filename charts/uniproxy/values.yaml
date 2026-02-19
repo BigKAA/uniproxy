@@ -6,7 +6,7 @@
 replicaCount: 1
 
 image:
-  repository: harbor.kryukov.lan/library/uniproxy
+  repository: container-registry.cloud.yandex.net/crpklna5l8v5m7c0ipst/uniproxy
   tag: ""  # defaults to appVersion
   pullPolicy: IfNotPresent
 

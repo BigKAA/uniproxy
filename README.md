@@ -587,7 +587,7 @@ gateway:
 | Value | Default | Description |
 |-------|:-------:|-------------|
 | `replicaCount` | `1` | Number of pod replicas |
-| `image.repository` | `harbor.kryukov.lan/library/uniproxy` | Image repository |
+| `image.repository` | `container-registry.cloud.yandex.net/crpklna5l8v5m7c0ipst/uniproxy` | Image repository |
 | `image.tag` | `""` (appVersion) | Image tag |
 | `config.name` | `""` (release name) | `DEPHEALTH_NAME` — application name |
 | `config.group` | `""` | `DEPHEALTH_GROUP` — logical group for metrics label |
