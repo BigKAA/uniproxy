@@ -30,7 +30,7 @@ Thumbs.db
 .env.*
 
 # AI
-CLAUDE.md
+# CLAUDE.md
 .templates/
 .serena/
-plans/
+# plans/
