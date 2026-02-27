@@ -18,10 +18,10 @@
 
 ## Current Status
 
-- **Active phase**: Phase 3
-- **Active subtask**: 3.1
+- **Active phase**: Phase 4
+- **Active subtask**: 4.1
 - **Last updated**: 2026-02-27
-- **Note**: Phase 2 completed — LDAP checker support implemented with all config parsing, YAML support, main.go integration, and unit tests
+- **Note**: Phase 3 completed — Helm chart updated with isentry label and LDAP env vars support (inline + Secret-based)
 
 ---
 
@@ -29,7 +29,7 @@
 
 - [x] [Phase 1: SDK Upgrade & isentry Label](#phase-1-sdk-upgrade--isentry-label)
 - [x] [Phase 2: LDAP Checker Support](#phase-2-ldap-checker-support)
-- [ ] [Phase 3: Helm Chart Update](#phase-3-helm-chart-update)
+- [x] [Phase 3: Helm Chart Update](#phase-3-helm-chart-update)
 - [ ] [Phase 4: Build & Test in Docker/K8s](#phase-4-build--test-in-dockerk8s)
 - [ ] [Phase 5: Documentation](#phase-5-documentation)
 
@@ -219,7 +219,7 @@ dephealth.LDAP(dep.Name, depOpts...)
 ## Phase 3: Helm Chart Update
 
 **Dependencies**: Phase 2
-**Status**: Pending
+**Status**: Completed
 
 ### Description
 
