@@ -102,7 +102,7 @@ func buildOptions(cfg *config.Config, logger *slog.Logger) ([]dephealth.Option, 
 	}
 
 	for _, dep := range cfg.Dependencies {
-		opt, err := buildDependencyOption(dep)
+		opt, err := buildDependencyOption(dep, cfg.IsEntry)
 		if err != nil {
 			return nil, err
 		}
@@ -112,7 +112,8 @@ func buildOptions(cfg *config.Config, logger *slog.Logger) ([]dephealth.Option, 
 }
 
 // buildDependencyOption creates a dephealth dependency option from config.
-func buildDependencyOption(dep config.Dependency) (dephealth.Option, error) {
+// When isEntry is true, the isentry=yes label is added to the dependency metrics.
+func buildDependencyOption(dep config.Dependency, isEntry bool) (dephealth.Option, error) {
 	var depOpts []dephealth.DependencyOption
 
 	// Connection source: URL or explicit host+port.
@@ -123,6 +124,10 @@ func buildDependencyOption(dep config.Dependency) (dephealth.Option, error) {
 	}
 
 	depOpts = append(depOpts, dephealth.Critical(dep.Critical))
+
+	if isEntry {
+		depOpts = append(depOpts, dephealth.WithLabel("isentry", "yes"))
+	}
 
 	if dep.CheckInterval > 0 {
 		depOpts = append(depOpts, dephealth.CheckInterval(dep.CheckInterval))

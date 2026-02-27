@@ -454,3 +454,55 @@ func TestLoadFromYAML_EmptyFile(t *testing.T) {
 		t.Errorf("Name = %q, want empty", cfg.Name)
 	}
 }
+
+func TestLoadFromYAML_IsEntry(t *testing.T) {
+	yamlContent := `
+name: test-app
+group: test
+isEntry: true
+dependencies:
+  - name: svc
+    type: http
+    url: http://svc:8080
+    critical: true
+`
+	path := writeTestYAML(t, yamlContent)
+	cfg, err := loadFromYAML(path)
+	if err != nil {
+		t.Fatalf("loadFromYAML() error: %v", err)
+	}
+	if !cfg.IsEntry {
+		t.Error("IsEntry = false, want true")
+	}
+}
+
+func TestLoadFromYAML_IsEntry_False(t *testing.T) {
+	yamlContent := `
+name: test-app
+group: test
+isEntry: false
+`
+	path := writeTestYAML(t, yamlContent)
+	cfg, err := loadFromYAML(path)
+	if err != nil {
+		t.Fatalf("loadFromYAML() error: %v", err)
+	}
+	if cfg.IsEntry {
+		t.Error("IsEntry = true, want false")
+	}
+}
+
+func TestLoadFromYAML_IsEntry_NotSet(t *testing.T) {
+	yamlContent := `
+name: test-app
+group: test
+`
+	path := writeTestYAML(t, yamlContent)
+	cfg, err := loadFromYAML(path)
+	if err != nil {
+		t.Fatalf("loadFromYAML() error: %v", err)
+	}
+	if cfg.IsEntry {
+		t.Error("IsEntry = true, want false (default)")
+	}
+}

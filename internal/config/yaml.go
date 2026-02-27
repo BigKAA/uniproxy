@@ -20,6 +20,7 @@ type yamlConfig struct {
 	CheckInterval string         `yaml:"checkInterval"`
 	Timeout       string         `yaml:"timeout"`
 	FetchTimeout  string         `yaml:"fetchTimeout"`
+	IsEntry       *bool          `yaml:"isEntry"`
 	Dependencies  []yamlDep      `yaml:"dependencies"`
 }
 
@@ -138,6 +139,11 @@ func convertYAMLToConfig(yc *yamlConfig) (*Config, error) {
 	cfg.FetchTimeout, err = parseDurationFlexible(yc.FetchTimeout)
 	if err != nil {
 		return nil, fmt.Errorf("fetchTimeout: %w", err)
+	}
+
+	// IsEntry flag.
+	if yc.IsEntry != nil {
+		cfg.IsEntry = *yc.IsEntry
 	}
 
 	// Server auth.

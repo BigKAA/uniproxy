@@ -2240,3 +2240,78 @@ dependencies:
 		t.Errorf("Auth.Token = %q, want %q", cfg.Auth.Token, "env-token")
 	}
 }
+
+func TestLoad_IsEntry_Yes(t *testing.T) {
+	setEnvs(t, map[string]string{
+		"DEPHEALTH_NAME":         "test-app",
+		"DEPHEALTH_GROUP":        "test",
+		"DEPHEALTH_DEPS":         "svc:http",
+		"DEPHEALTH_SVC_URL":      "http://svc:8080",
+		"DEPHEALTH_SVC_CRITICAL": "yes",
+		"DEPHEALTH_ISENTRY":      "yes",
+	})
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !cfg.IsEntry {
+		t.Error("IsEntry = false, want true")
+	}
+}
+
+func TestLoad_IsEntry_No(t *testing.T) {
+	setEnvs(t, map[string]string{
+		"DEPHEALTH_NAME":         "test-app",
+		"DEPHEALTH_GROUP":        "test",
+		"DEPHEALTH_DEPS":         "svc:http",
+		"DEPHEALTH_SVC_URL":      "http://svc:8080",
+		"DEPHEALTH_SVC_CRITICAL": "yes",
+		"DEPHEALTH_ISENTRY":      "no",
+	})
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.IsEntry {
+		t.Error("IsEntry = true, want false")
+	}
+}
+
+func TestLoad_IsEntry_NotSet(t *testing.T) {
+	setEnvs(t, map[string]string{
+		"DEPHEALTH_NAME":         "test-app",
+		"DEPHEALTH_GROUP":        "test",
+		"DEPHEALTH_DEPS":         "svc:http",
+		"DEPHEALTH_SVC_URL":      "http://svc:8080",
+		"DEPHEALTH_SVC_CRITICAL": "yes",
+	})
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.IsEntry {
+		t.Error("IsEntry = true, want false (default)")
+	}
+}
+
+func TestLoad_IsEntry_Invalid(t *testing.T) {
+	setEnvs(t, map[string]string{
+		"DEPHEALTH_NAME":         "test-app",
+		"DEPHEALTH_GROUP":        "test",
+		"DEPHEALTH_DEPS":         "svc:http",
+		"DEPHEALTH_SVC_URL":      "http://svc:8080",
+		"DEPHEALTH_SVC_CRITICAL": "yes",
+		"DEPHEALTH_ISENTRY":      "maybe",
+	})
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected error for invalid DEPHEALTH_ISENTRY, got nil")
+	}
+	if !strings.Contains(err.Error(), "DEPHEALTH_ISENTRY") {
+		t.Errorf("error %q should mention DEPHEALTH_ISENTRY", err)
+	}
+}

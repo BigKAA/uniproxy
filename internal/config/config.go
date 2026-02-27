@@ -21,6 +21,7 @@ type Config struct {
 	CheckInterval time.Duration
 	Timeout       time.Duration // global check timeout (0 = SDK default)
 	FetchTimeout  time.Duration // timeout for recursive HTTP fetch (default 5s)
+	IsEntry       bool          // when true, isentry=yes label is added to all dependency metrics
 	Dependencies  []Dependency
 }
 
@@ -224,6 +225,15 @@ func applyEnvOverrides(cfg *Config) error {
 			return fmt.Errorf("invalid DEPHEALTH_FETCH_TIMEOUT %q: %w", v, err)
 		}
 		cfg.FetchTimeout = time.Duration(sec * float64(time.Second))
+	}
+
+	// IsEntry flag (optional global label).
+	if v := os.Getenv("DEPHEALTH_ISENTRY"); v != "" {
+		b, err := parseBool(v)
+		if err != nil {
+			return fmt.Errorf("invalid DEPHEALTH_ISENTRY: %w", err)
+		}
+		cfg.IsEntry = b
 	}
 
 	// Server-side (incoming) auth.
