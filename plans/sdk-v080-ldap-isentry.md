@@ -18,10 +18,10 @@
 
 ## Current Status
 
-- **Active phase**: Phase 4
-- **Active subtask**: 4.1
+- **Active phase**: All phases completed
+- **Active subtask**: —
 - **Last updated**: 2026-02-27
-- **Note**: Phase 3 completed — Helm chart updated with isentry label and LDAP env vars support (inline + Secret-based)
+- **Note**: Phase 5 completed — All documentation updated: README (EN/RU) with SDK v0.8.0 badge, LDAP type, isentry label, LDAP env vars; CLAUDE.md with LDAP type and troubleshooting; Helm instance file with LDAP example; use-cases (EN/RU) with LDAP/AD scenario
 
 ---
 
@@ -30,8 +30,8 @@
 - [x] [Phase 1: SDK Upgrade & isentry Label](#phase-1-sdk-upgrade--isentry-label)
 - [x] [Phase 2: LDAP Checker Support](#phase-2-ldap-checker-support)
 - [x] [Phase 3: Helm Chart Update](#phase-3-helm-chart-update)
-- [ ] [Phase 4: Build & Test in Docker/K8s](#phase-4-build--test-in-dockerk8s)
-- [ ] [Phase 5: Documentation](#phase-5-documentation)
+- [x] [Phase 4: Build & Test in Docker/K8s](#phase-4-build--test-in-dockerk8s)
+- [x] [Phase 5: Documentation](#phase-5-documentation)
 
 ---
 
@@ -308,7 +308,7 @@ in instance files, and the deployment template needs new env var mappings.
 ## Phase 4: Build & Test in Docker/K8s
 
 **Dependencies**: Phase 1, Phase 2, Phase 3
-**Status**: Pending
+**Status**: Completed
 
 ### Description
 
@@ -356,7 +356,7 @@ Build Docker image and test the complete solution in Docker first, then in Kuber
 ## Phase 5: Documentation
 
 **Dependencies**: Phase 2, Phase 3
-**Status**: Pending
+**Status**: Completed
 
 ### Description
 
