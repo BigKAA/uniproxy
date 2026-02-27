@@ -106,7 +106,7 @@ type LogConfig struct {
 // Dependency describes a single dependency to health-check.
 type Dependency struct {
 	Name       string
-	Type       string // http, redis, postgres, grpc, tcp, mysql, amqp, kafka
+	Type       string // http, redis, postgres, grpc, tcp, mysql, amqp, kafka, ldap
 	URL        string
 	Host       string
 	Port       string
@@ -134,6 +134,16 @@ type Dependency struct {
 
 	// AMQP-specific.
 	AMQPURL string
+
+	// LDAP-specific.
+	LDAPCheckMethod   string // "anonymous_bind", "simple_bind", "root_dse", "search"
+	LDAPBindDN        string // DN for simple_bind
+	LDAPBindPassword  string // password for simple_bind
+	LDAPBaseDN        string // base DN for search
+	LDAPSearchFilter  string // LDAP filter for search (default: (objectClass=*))
+	LDAPSearchScope   string // "base", "one", "sub" (default: base)
+	LDAPStartTLS      *bool  // StartTLS for ldap:// connections
+	LDAPTLSSkipVerify *bool  // skip TLS certificate verification
 
 	// Authentication (mutually exclusive: only one method per dependency).
 	BearerToken string
@@ -644,7 +654,7 @@ func parseDeps(s string, ga globalAuth) ([]Dependency, error) {
 		depType := parts[1]
 
 		switch depType {
-		case "http", "redis", "postgres", "grpc", "tcp", "mysql", "amqp", "kafka":
+		case "http", "redis", "postgres", "grpc", "tcp", "mysql", "amqp", "kafka", "ldap":
 		default:
 			return nil, fmt.Errorf("dependency %q: unsupported type %q", name, depType)
 		}
@@ -743,6 +753,54 @@ func parseSingleDep(name, depType string, ga globalAuth) (Dependency, error) {
 
 	case "amqp":
 		dep.AMQPURL = os.Getenv(prefix + "AMQP_URL")
+
+	case "ldap":
+		dep.LDAPCheckMethod = os.Getenv(prefix + "LDAP_CHECK_METHOD")
+		if dep.LDAPCheckMethod == "" {
+			dep.LDAPCheckMethod = "root_dse"
+		}
+		switch dep.LDAPCheckMethod {
+		case "anonymous_bind", "simple_bind", "root_dse", "search":
+		default:
+			return dep, fmt.Errorf("dependency %q: invalid %sLDAP_CHECK_METHOD %q (expected anonymous_bind/simple_bind/root_dse/search)",
+				name, prefix, dep.LDAPCheckMethod)
+		}
+
+		dep.LDAPBindDN = os.Getenv(prefix + "LDAP_BIND_DN")
+
+		var ldapErr error
+		dep.LDAPBindPassword, ldapErr = resolveSecret(prefix + "LDAP_BIND_PASSWORD")
+		if ldapErr != nil {
+			return dep, fmt.Errorf("dependency %q: %w", name, ldapErr)
+		}
+
+		dep.LDAPBaseDN = os.Getenv(prefix + "LDAP_BASE_DN")
+		dep.LDAPSearchFilter = os.Getenv(prefix + "LDAP_SEARCH_FILTER")
+
+		dep.LDAPSearchScope = os.Getenv(prefix + "LDAP_SEARCH_SCOPE")
+		if dep.LDAPSearchScope != "" {
+			switch dep.LDAPSearchScope {
+			case "base", "one", "sub":
+			default:
+				return dep, fmt.Errorf("dependency %q: invalid %sLDAP_SEARCH_SCOPE %q (expected base/one/sub)",
+					name, prefix, dep.LDAPSearchScope)
+			}
+		}
+
+		if v := os.Getenv(prefix + "LDAP_START_TLS"); v != "" {
+			b, err := parseBool(v)
+			if err != nil {
+				return dep, fmt.Errorf("dependency %q: invalid %sLDAP_START_TLS: %w", name, prefix, err)
+			}
+			dep.LDAPStartTLS = &b
+		}
+		if v := os.Getenv(prefix + "LDAP_TLS_SKIP_VERIFY"); v != "" {
+			b, err := parseBool(v)
+			if err != nil {
+				return dep, fmt.Errorf("dependency %q: invalid %sLDAP_TLS_SKIP_VERIFY: %w", name, prefix, err)
+			}
+			dep.LDAPTLSSkipVerify = &b
+		}
 	}
 
 	// Authentication: resolve per-dep values, fall back to global.

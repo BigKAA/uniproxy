@@ -195,6 +195,31 @@ func buildDependencyOption(dep config.Dependency, isEntry bool) (dephealth.Optio
 		if dep.AMQPURL != "" {
 			depOpts = append(depOpts, dephealth.WithAMQPURL(dep.AMQPURL))
 		}
+	case "ldap":
+		if dep.LDAPCheckMethod != "" {
+			depOpts = append(depOpts, dephealth.WithLDAPCheckMethod(dep.LDAPCheckMethod))
+		}
+		if dep.LDAPBindDN != "" {
+			depOpts = append(depOpts, dephealth.WithLDAPBindDN(dep.LDAPBindDN))
+		}
+		if dep.LDAPBindPassword != "" {
+			depOpts = append(depOpts, dephealth.WithLDAPBindPassword(dep.LDAPBindPassword))
+		}
+		if dep.LDAPBaseDN != "" {
+			depOpts = append(depOpts, dephealth.WithLDAPBaseDN(dep.LDAPBaseDN))
+		}
+		if dep.LDAPSearchFilter != "" {
+			depOpts = append(depOpts, dephealth.WithLDAPSearchFilter(dep.LDAPSearchFilter))
+		}
+		if dep.LDAPSearchScope != "" {
+			depOpts = append(depOpts, dephealth.WithLDAPSearchScope(dep.LDAPSearchScope))
+		}
+		if dep.LDAPStartTLS != nil {
+			depOpts = append(depOpts, dephealth.WithLDAPStartTLS(*dep.LDAPStartTLS))
+		}
+		if dep.LDAPTLSSkipVerify != nil {
+			depOpts = append(depOpts, dephealth.WithLDAPTLSSkipVerify(*dep.LDAPTLSSkipVerify))
+		}
 	}
 
 	// Factory by type.
@@ -215,6 +240,8 @@ func buildDependencyOption(dep config.Dependency, isEntry bool) (dephealth.Optio
 		return dephealth.AMQP(dep.Name, depOpts...), nil
 	case "kafka":
 		return dephealth.Kafka(dep.Name, depOpts...), nil
+	case "ldap":
+		return dephealth.LDAP(dep.Name, depOpts...), nil
 	default:
 		return nil, fmt.Errorf("unsupported dependency type %q for %q", dep.Type, dep.Name)
 	}

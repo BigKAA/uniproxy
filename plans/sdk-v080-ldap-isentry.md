@@ -18,17 +18,17 @@
 
 ## Current Status
 
-- **Active phase**: Phase 2
-- **Active subtask**: 2.1
+- **Active phase**: Phase 3
+- **Active subtask**: 3.1
 - **Last updated**: 2026-02-27
-- **Note**: Phase 1 completed — SDK upgraded to v0.8.0, isentry label implemented
+- **Note**: Phase 2 completed — LDAP checker support implemented with all config parsing, YAML support, main.go integration, and unit tests
 
 ---
 
 ## Table of Contents
 
 - [x] [Phase 1: SDK Upgrade & isentry Label](#phase-1-sdk-upgrade--isentry-label)
-- [ ] [Phase 2: LDAP Checker Support](#phase-2-ldap-checker-support)
+- [x] [Phase 2: LDAP Checker Support](#phase-2-ldap-checker-support)
 - [ ] [Phase 3: Helm Chart Update](#phase-3-helm-chart-update)
 - [ ] [Phase 4: Build & Test in Docker/K8s](#phase-4-build--test-in-dockerk8s)
 - [ ] [Phase 5: Documentation](#phase-5-documentation)

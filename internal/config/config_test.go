@@ -2315,3 +2315,235 @@ func TestLoad_IsEntry_Invalid(t *testing.T) {
 		t.Errorf("error %q should mention DEPHEALTH_ISENTRY", err)
 	}
 }
+
+// --- LDAP dependency tests ---
+
+func TestLoad_LDAP_Minimal_RootDSE(t *testing.T) {
+	setEnvs(t, map[string]string{
+		"DEPHEALTH_NAME":              "app",
+		"DEPHEALTH_GROUP":             "test",
+		"DEPHEALTH_DEPS":              "myldap:ldap",
+		"DEPHEALTH_MYLDAP_URL":        "ldap://ldap.example.com:389",
+		"DEPHEALTH_MYLDAP_CRITICAL":   "yes",
+	})
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(cfg.Dependencies) != 1 {
+		t.Fatalf("len(Dependencies) = %d, want 1", len(cfg.Dependencies))
+	}
+	dep := cfg.Dependencies[0]
+	if dep.Name != "myldap" {
+		t.Errorf("Name = %q, want %q", dep.Name, "myldap")
+	}
+	if dep.Type != "ldap" {
+		t.Errorf("Type = %q, want %q", dep.Type, "ldap")
+	}
+	if dep.URL != "ldap://ldap.example.com:389" {
+		t.Errorf("URL = %q, want %q", dep.URL, "ldap://ldap.example.com:389")
+	}
+	if !dep.Critical {
+		t.Error("Critical = false, want true")
+	}
+	if dep.LDAPCheckMethod != "root_dse" {
+		t.Errorf("LDAPCheckMethod = %q, want %q (default)", dep.LDAPCheckMethod, "root_dse")
+	}
+}
+
+func TestLoad_LDAP_SimpleBind(t *testing.T) {
+	setEnvs(t, map[string]string{
+		"DEPHEALTH_NAME":                       "app",
+		"DEPHEALTH_GROUP":                      "test",
+		"DEPHEALTH_DEPS":                       "ad:ldap",
+		"DEPHEALTH_AD_URL":                     "ldaps://ad.corp.com:636",
+		"DEPHEALTH_AD_CRITICAL":                "yes",
+		"DEPHEALTH_AD_LDAP_CHECK_METHOD":       "simple_bind",
+		"DEPHEALTH_AD_LDAP_BIND_DN":            "cn=readonly,dc=corp,dc=com",
+		"DEPHEALTH_AD_LDAP_BIND_PASSWORD":      "s3cret",
+	})
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	dep := cfg.Dependencies[0]
+	if dep.LDAPCheckMethod != "simple_bind" {
+		t.Errorf("LDAPCheckMethod = %q, want %q", dep.LDAPCheckMethod, "simple_bind")
+	}
+	if dep.LDAPBindDN != "cn=readonly,dc=corp,dc=com" {
+		t.Errorf("LDAPBindDN = %q, want %q", dep.LDAPBindDN, "cn=readonly,dc=corp,dc=com")
+	}
+	if dep.LDAPBindPassword != "s3cret" {
+		t.Errorf("LDAPBindPassword = %q, want %q", dep.LDAPBindPassword, "s3cret")
+	}
+}
+
+func TestLoad_LDAP_Search(t *testing.T) {
+	setEnvs(t, map[string]string{
+		"DEPHEALTH_NAME":                       "app",
+		"DEPHEALTH_GROUP":                      "test",
+		"DEPHEALTH_DEPS":                       "openldap:ldap",
+		"DEPHEALTH_OPENLDAP_URL":               "ldap://openldap:389",
+		"DEPHEALTH_OPENLDAP_CRITICAL":          "no",
+		"DEPHEALTH_OPENLDAP_LDAP_CHECK_METHOD": "search",
+		"DEPHEALTH_OPENLDAP_LDAP_BASE_DN":      "dc=example,dc=org",
+		"DEPHEALTH_OPENLDAP_LDAP_SEARCH_FILTER": "(uid=test)",
+		"DEPHEALTH_OPENLDAP_LDAP_SEARCH_SCOPE": "sub",
+	})
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	dep := cfg.Dependencies[0]
+	if dep.LDAPCheckMethod != "search" {
+		t.Errorf("LDAPCheckMethod = %q, want %q", dep.LDAPCheckMethod, "search")
+	}
+	if dep.LDAPBaseDN != "dc=example,dc=org" {
+		t.Errorf("LDAPBaseDN = %q, want %q", dep.LDAPBaseDN, "dc=example,dc=org")
+	}
+	if dep.LDAPSearchFilter != "(uid=test)" {
+		t.Errorf("LDAPSearchFilter = %q, want %q", dep.LDAPSearchFilter, "(uid=test)")
+	}
+	if dep.LDAPSearchScope != "sub" {
+		t.Errorf("LDAPSearchScope = %q, want %q", dep.LDAPSearchScope, "sub")
+	}
+}
+
+func TestLoad_LDAP_HostPort(t *testing.T) {
+	setEnvs(t, map[string]string{
+		"DEPHEALTH_NAME":              "app",
+		"DEPHEALTH_GROUP":             "test",
+		"DEPHEALTH_DEPS":              "myldap:ldap",
+		"DEPHEALTH_MYLDAP_HOST":       "ldap.local",
+		"DEPHEALTH_MYLDAP_PORT":       "389",
+		"DEPHEALTH_MYLDAP_CRITICAL":   "yes",
+	})
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	dep := cfg.Dependencies[0]
+	if dep.Host != "ldap.local" || dep.Port != "389" {
+		t.Errorf("Host:Port = %s:%s, want ldap.local:389", dep.Host, dep.Port)
+	}
+	if dep.URL != "" {
+		t.Errorf("URL should be empty, got %q", dep.URL)
+	}
+}
+
+func TestLoad_LDAP_StartTLS_TLSSkipVerify(t *testing.T) {
+	setEnvs(t, map[string]string{
+		"DEPHEALTH_NAME":                          "app",
+		"DEPHEALTH_GROUP":                         "test",
+		"DEPHEALTH_DEPS":                          "myldap:ldap",
+		"DEPHEALTH_MYLDAP_URL":                    "ldap://ldap.local:389",
+		"DEPHEALTH_MYLDAP_CRITICAL":               "yes",
+		"DEPHEALTH_MYLDAP_LDAP_START_TLS":         "yes",
+		"DEPHEALTH_MYLDAP_LDAP_TLS_SKIP_VERIFY":   "true",
+	})
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	dep := cfg.Dependencies[0]
+	if dep.LDAPStartTLS == nil || !*dep.LDAPStartTLS {
+		t.Error("LDAPStartTLS should be true")
+	}
+	if dep.LDAPTLSSkipVerify == nil || !*dep.LDAPTLSSkipVerify {
+		t.Error("LDAPTLSSkipVerify should be true")
+	}
+}
+
+func TestLoad_LDAP_BindPasswordFromFile(t *testing.T) {
+	dir := t.TempDir()
+	passPath := filepath.Join(dir, "ldap-pass")
+	os.WriteFile(passPath, []byte("  ldap-secret  \n"), 0644)
+
+	os.Unsetenv("DEPHEALTH_AD_LDAP_BIND_PASSWORD")
+	setEnvs(t, map[string]string{
+		"DEPHEALTH_NAME":                           "app",
+		"DEPHEALTH_GROUP":                          "test",
+		"DEPHEALTH_DEPS":                           "ad:ldap",
+		"DEPHEALTH_AD_URL":                         "ldaps://ad.corp.com:636",
+		"DEPHEALTH_AD_CRITICAL":                    "yes",
+		"DEPHEALTH_AD_LDAP_CHECK_METHOD":           "simple_bind",
+		"DEPHEALTH_AD_LDAP_BIND_DN":                "cn=svc,dc=corp,dc=com",
+		"DEPHEALTH_AD_LDAP_BIND_PASSWORD_FILE":     passPath,
+	})
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	dep := cfg.Dependencies[0]
+	if dep.LDAPBindPassword != "ldap-secret" {
+		t.Errorf("LDAPBindPassword = %q, want %q (trimmed)", dep.LDAPBindPassword, "ldap-secret")
+	}
+}
+
+func TestLoad_LDAP_InvalidCheckMethod(t *testing.T) {
+	setEnvs(t, map[string]string{
+		"DEPHEALTH_NAME":                       "app",
+		"DEPHEALTH_GROUP":                      "test",
+		"DEPHEALTH_DEPS":                       "myldap:ldap",
+		"DEPHEALTH_MYLDAP_URL":                 "ldap://ldap.local:389",
+		"DEPHEALTH_MYLDAP_CRITICAL":            "yes",
+		"DEPHEALTH_MYLDAP_LDAP_CHECK_METHOD":   "invalid_method",
+	})
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected error for invalid LDAP_CHECK_METHOD, got nil")
+	}
+	if !strings.Contains(err.Error(), "LDAP_CHECK_METHOD") {
+		t.Errorf("error %q should mention LDAP_CHECK_METHOD", err)
+	}
+}
+
+func TestLoad_LDAP_InvalidSearchScope(t *testing.T) {
+	setEnvs(t, map[string]string{
+		"DEPHEALTH_NAME":                          "app",
+		"DEPHEALTH_GROUP":                         "test",
+		"DEPHEALTH_DEPS":                          "myldap:ldap",
+		"DEPHEALTH_MYLDAP_URL":                    "ldap://ldap.local:389",
+		"DEPHEALTH_MYLDAP_CRITICAL":               "yes",
+		"DEPHEALTH_MYLDAP_LDAP_CHECK_METHOD":      "search",
+		"DEPHEALTH_MYLDAP_LDAP_SEARCH_SCOPE":      "invalid",
+	})
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected error for invalid LDAP_SEARCH_SCOPE, got nil")
+	}
+	if !strings.Contains(err.Error(), "LDAP_SEARCH_SCOPE") {
+		t.Errorf("error %q should mention LDAP_SEARCH_SCOPE", err)
+	}
+}
+
+func TestLoad_LDAP_AnonymousBind(t *testing.T) {
+	setEnvs(t, map[string]string{
+		"DEPHEALTH_NAME":                       "app",
+		"DEPHEALTH_GROUP":                      "test",
+		"DEPHEALTH_DEPS":                       "myldap:ldap",
+		"DEPHEALTH_MYLDAP_URL":                 "ldap://ldap.local:389",
+		"DEPHEALTH_MYLDAP_CRITICAL":            "no",
+		"DEPHEALTH_MYLDAP_LDAP_CHECK_METHOD":   "anonymous_bind",
+	})
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	dep := cfg.Dependencies[0]
+	if dep.LDAPCheckMethod != "anonymous_bind" {
+		t.Errorf("LDAPCheckMethod = %q, want %q", dep.LDAPCheckMethod, "anonymous_bind")
+	}
+	if dep.Critical {
+		t.Error("Critical should be false")
+	}
+}

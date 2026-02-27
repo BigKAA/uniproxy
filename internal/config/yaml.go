@@ -76,6 +76,16 @@ type yamlDep struct {
 	RedisDB         *int         `yaml:"redisDB"`
 	AMQPURL         string       `yaml:"amqpUrl"`
 	Auth            *yamlDepAuth `yaml:"auth"`
+
+	// LDAP-specific.
+	LDAPCheckMethod   string `yaml:"ldapCheckMethod"`
+	LDAPBindDN        string `yaml:"ldapBindDN"`
+	LDAPBindPassword  string `yaml:"ldapBindPassword"`
+	LDAPBaseDN        string `yaml:"ldapBaseDN"`
+	LDAPSearchFilter  string `yaml:"ldapSearchFilter"`
+	LDAPSearchScope   string `yaml:"ldapSearchScope"`
+	LDAPStartTLS      *bool  `yaml:"ldapStartTLS"`
+	LDAPTLSSkipVerify *bool  `yaml:"ldapTLSSkipVerify"`
 }
 
 // yamlDepAuth holds per-dependency authentication in YAML.
@@ -164,21 +174,29 @@ func convertYAMLToConfig(yc *yamlConfig) (*Config, error) {
 // convertYAMLDep converts a single yamlDep to Dependency.
 func convertYAMLDep(yd *yamlDep) (Dependency, error) {
 	dep := Dependency{
-		Name:            yd.Name,
-		Type:            yd.Type,
-		URL:             yd.URL,
-		Host:            yd.Host,
-		Port:            yd.Port,
-		Critical:        yd.Critical,
-		HealthPath:      yd.HealthPath,
-		TLS:             yd.TLS,
-		TLSSkipVerify:   yd.TLSSkipVerify,
-		GRPCServiceName: yd.GRPCServiceName,
-		PostgresQuery:   yd.PostgresQuery,
-		MySQLQuery:      yd.MySQLQuery,
-		RedisPassword:   yd.RedisPassword,
-		RedisDB:         yd.RedisDB,
-		AMQPURL:         yd.AMQPURL,
+		Name:              yd.Name,
+		Type:              yd.Type,
+		URL:               yd.URL,
+		Host:              yd.Host,
+		Port:              yd.Port,
+		Critical:          yd.Critical,
+		HealthPath:        yd.HealthPath,
+		TLS:               yd.TLS,
+		TLSSkipVerify:     yd.TLSSkipVerify,
+		GRPCServiceName:   yd.GRPCServiceName,
+		PostgresQuery:     yd.PostgresQuery,
+		MySQLQuery:        yd.MySQLQuery,
+		RedisPassword:     yd.RedisPassword,
+		RedisDB:           yd.RedisDB,
+		AMQPURL:           yd.AMQPURL,
+		LDAPCheckMethod:   yd.LDAPCheckMethod,
+		LDAPBindDN:        yd.LDAPBindDN,
+		LDAPBindPassword:  yd.LDAPBindPassword,
+		LDAPBaseDN:        yd.LDAPBaseDN,
+		LDAPSearchFilter:  yd.LDAPSearchFilter,
+		LDAPSearchScope:   yd.LDAPSearchScope,
+		LDAPStartTLS:      yd.LDAPStartTLS,
+		LDAPTLSSkipVerify: yd.LDAPTLSSkipVerify,
 	}
 
 	var err error
