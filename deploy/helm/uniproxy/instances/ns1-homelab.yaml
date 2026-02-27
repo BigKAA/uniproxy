@@ -42,3 +42,18 @@ instances:
         type: postgres
         url: "postgres://dephealth:dephealth-test-pass@postgresql.dephealth-postgresql.svc:5432/dephealth"
         critical: "yes"
+      # LDAP example (uncomment to enable):
+      # - name: corp-ldap
+      #   type: ldap
+      #   url: "ldap://ldap.example.com:389"
+      #   critical: "no"
+      #   ldapCheckMethod: "root_dse"
+      #   # For simple_bind:
+      #   # ldapCheckMethod: "simple_bind"
+      #   # ldapBindDN: "cn=healthcheck,dc=example,dc=com"
+      #   # ldapBindPassword: "secret"
+      #   # ldapStartTLS: "true"
+      #   # Or use Kubernetes Secret:
+      #   # auth:
+      #   #   existingSecret: "ldap-creds"
+      #   #   ldapBindPasswordKey: "bind-password"

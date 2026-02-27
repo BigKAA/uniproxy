@@ -12,7 +12,7 @@ curl "http://entry-point:8080/?detail=true&depth=5"
 
 Один запрос возвращает вложенное JSON-дерево со статусом здоровья, задержкой, деталями подключения и ответами downstream-сервисов для каждого сервиса в цепочке.
 
-uniproxy работает в любом окружении: Kubernetes, Docker, bare metal, ВМ или в любой их комбинации. Поддерживает проверки HTTP, gRPC, TCP, PostgreSQL, MySQL, Redis, AMQP и Kafka.
+uniproxy работает в любом окружении: Kubernetes, Docker, bare metal, ВМ или в любой их комбинации. Поддерживает проверки HTTP, gRPC, TCP, PostgreSQL, MySQL, Redis, AMQP, Kafka и LDAP.
 
 ---
 
@@ -32,6 +32,7 @@ uniproxy работает в любом окружении: Kubernetes, Docker, 
 12. [Проверка сервисов за Bearer-аутентификацией](#12-проверка-сервисов-за-bearer-аутентификацией)
 13. [Безопасное хранение учётных данных в Kubernetes Secrets](#13-безопасное-хранение-учётных-данных-в-kubernetes-secrets)
 14. [Пользовательские API-ключи в заголовках для сторонних сервисов](#14-пользовательские-api-ключи-в-заголовках-для-сторонних-сервисов)
+15. [Тестирование связности с LDAP / Active Directory](#15-тестирование-связности-с-ldap--active-directory)
 
 ---
 
@@ -1070,6 +1071,83 @@ docker run -p 8080:8080 \
 
 ```bash
 -e DEPHEALTH_GRPC_SVC_METADATA='{"x-api-key":"key123","x-request-id":"health-check"}'
+```
+
+---
+
+## 15. Тестирование связности с LDAP / Active Directory
+
+### Проблема
+
+Ваши приложения зависят от корпоративного LDAP или Active Directory сервера для аутентификации. Нужно проверять связность с LDAP и мониторить его доступность наряду с другими зависимостями.
+
+### Архитектура
+
+```
+┌──────────────┐     ┌──────────────┐     ┌──────────────┐
+│  web-app     │────▶│  auth-svc    │────▶│  AD / LDAP   │
+│  uniproxy    │     │  uniproxy    │     │  :389 / :636 │
+│  :8080       │     │  :8080       │     └──────────────┘
+└──────────────┘     └──────────────┘
+      │
+      ▼
+┌──────────────┐
+│  postgres    │
+│  :5432       │
+└──────────────┘
+```
+
+### Конфигурация
+
+```bash
+docker run -p 8080:8080 \
+  -e DEPHEALTH_NAME=auth-svc \
+  -e DEPHEALTH_GROUP=production \
+  -e DEPHEALTH_DEPS="corp-ad:ldap" \
+  -e DEPHEALTH_CORP_AD_URL="ldaps://ad.corp.example.com:636" \
+  -e DEPHEALTH_CORP_AD_CRITICAL=yes \
+  -e DEPHEALTH_CORP_AD_LDAP_CHECK_METHOD=simple_bind \
+  -e DEPHEALTH_CORP_AD_LDAP_BIND_DN="cn=svc-healthcheck,ou=Service Accounts,dc=corp,dc=example,dc=com" \
+  -e DEPHEALTH_CORP_AD_LDAP_BIND_PASSWORD_FILE=/run/secrets/ldap-password \
+  uniproxy:latest
+```
+
+### Методы проверки LDAP
+
+| Метод | Описание | Применение |
+|-------|----------|------------|
+| `root_dse` | Чтение Root DSE (без аутентификации) | Базовая проверка связности |
+| `anonymous_bind` | Анонимный LDAP bind | Проверка что сервер принимает соединения |
+| `simple_bind` | Bind с DN + паролем | Валидация учётных данных сервисного аккаунта |
+| `search` | Выполнить LDAP-поиск | Проверка доступа на чтение каталога |
+
+### Пример метода search
+
+```bash
+-e DEPHEALTH_MYLDAP_LDAP_CHECK_METHOD=search \
+-e DEPHEALTH_MYLDAP_LDAP_BIND_DN="cn=reader,dc=example,dc=com" \
+-e DEPHEALTH_MYLDAP_LDAP_BIND_PASSWORD="secret" \
+-e DEPHEALTH_MYLDAP_LDAP_BASE_DN="ou=Users,dc=example,dc=com" \
+-e DEPHEALTH_MYLDAP_LDAP_SEARCH_FILTER="(objectClass=person)" \
+-e DEPHEALTH_MYLDAP_LDAP_SEARCH_SCOPE=sub
+```
+
+### Kubernetes с Secret
+
+```yaml
+# instances/auth-svc.yaml
+instances:
+  - name: auth-svc
+    connections:
+      - name: corp-ad
+        type: ldap
+        url: "ldaps://ad.corp.example.com:636"
+        critical: "yes"
+        ldapCheckMethod: "simple_bind"
+        ldapBindDN: "cn=svc-healthcheck,ou=Service Accounts,dc=corp,dc=example,dc=com"
+        auth:
+          existingSecret: "ldap-creds"
+          ldapBindPasswordKey: "password"
 ```
 
 ---

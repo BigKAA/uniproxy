@@ -2,7 +2,7 @@ apiVersion: v2
 name: uniproxy
 description: Universal test proxy for dependency health monitoring
 version: 0.2.0
-appVersion: "0.6.1"
+appVersion: "0.7.0"
 type: application
 keywords:
   - dephealth

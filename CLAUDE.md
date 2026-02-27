@@ -16,6 +16,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **CRITICAL**: All development, debugging, and testing MUST be done using Docker containers or Kubernetes.
 
+**CRITICAL**: Docker images must be built as multi-platform for `linux/amd64` and `linux/arm64` using `docker buildx build --platform linux/amd64,linux/arm64`.
+
 ### Available Tools
 - `kubectl` — configured for test Kubernetes cluster
 - `helm` — for Helm chart operations
@@ -154,7 +156,7 @@ helm lint ./deploy/helm/uniproxy
 - Required vars: `DEPHEALTH_NAME`, `DEPHEALTH_GROUP`, `DEPHEALTH_DEPS`
 - Optional: `LISTEN_ADDR`, `LOG_LEVEL`, `DEPHEALTH_CHECK_INTERVAL`
 - Per-dependency vars: `DEPHEALTH_<NAME>_URL` or `DEPHEALTH_<NAME>_HOST` + `DEPHEALTH_<NAME>_PORT`
-- Dependency types: `http`, `redis`, `postgres`, `grpc`
+- Dependency types: `http`, `redis`, `postgres`, `grpc`, `tcp`, `mysql`, `amqp`, `kafka`, `ldap`
 
 **internal/server/server.go**
 - HTTP server using `go-chi/chi` router
@@ -180,6 +182,8 @@ uniproxy uses a **declarative configuration** approach:
 3. `main.go` builds `dephealth.Option` slice from config
 4. SDK creates health checkers for each dependency
 5. SDK runs checks in background and updates Prometheus metrics
+
+Optional global `isentry` label (`DEPHEALTH_ISENTRY=yes`) marks entry-point applications in topology visualization by adding `isentry=yes` to all dependency metrics.
 
 This allows **instance-based deployment**: multiple uniproxy instances with different dependency configs can run in the same namespace.
 
@@ -296,4 +300,5 @@ kubectl port-forward -n <namespace> deployment/<release-name> 8080:8080 9090:909
 - **"DEPHEALTH_GROUP is required"**: Missing required env var
 - **"unsupported dependency type"**: Check `DEPHEALTH_DEPS` format (name:type)
 - **Health check always DOWN**: Verify connectivity from container/pod to target host
+- **LDAP health always DOWN**: Verify network connectivity to LDAP server, check bind credentials for `simple_bind`, verify StartTLS settings
 - **Metrics not updating**: Check `DEPHEALTH_CHECK_INTERVAL` and SDK logs

@@ -1,7 +1,7 @@
 # uniproxy
 
 [![Go Version](https://img.shields.io/badge/go-1.25-00ADD8.svg)](https://golang.org/)
-[![dephealth SDK](https://img.shields.io/badge/dephealth_SDK-v0.4.2-blue.svg)](https://github.com/BigKAA/topologymetrics)
+[![dephealth SDK](https://img.shields.io/badge/dephealth_SDK-v0.8.0-blue.svg)](https://github.com/BigKAA/topologymetrics)
 [![License](https://img.shields.io/badge/license-Apache%202.0-green.svg)](./LICENSE)
 
 **Universal test proxy for dependency health monitoring with dephealth SDK**
@@ -14,7 +14,8 @@
 
 ### Key Features
 
-- Health checking for HTTP, gRPC, PostgreSQL, MySQL, Redis, AMQP, Kafka, and TCP dependencies
+- Health checking for HTTP, gRPC, PostgreSQL, MySQL, Redis, AMQP, Kafka, LDAP, and TCP dependencies
+- Optional `isentry` label for marking entry-point applications in topology visualization
 - Enriched Status API with detailed dependency info and recursive HTTP chain visibility
 - Configuration via environment variables or YAML file (12-factor app)
 - Server-side authentication for status and metrics endpoints (Basic, Bearer, API Key)
@@ -167,6 +168,7 @@ See [examples/config.yaml](./examples/config.yaml) for a full example with all f
 | `DEPHEALTH_CHECK_INTERVAL` | No | `10` | Health check interval in seconds |
 | `DEPHEALTH_TIMEOUT` | No | SDK default | Global health check timeout in seconds |
 | `DEPHEALTH_FETCH_TIMEOUT` | No | `5` | Timeout for recursive HTTP detail fetch in seconds |
+| `DEPHEALTH_ISENTRY` | No | — | Add `isentry=yes` label to all dependency metrics (`yes`/`no`) |
 
 ### Per-Dependency Variables
 
@@ -189,6 +191,14 @@ For each dependency listed in `DEPHEALTH_DEPS`, configure it using environment v
 | `DEPHEALTH_<NAME>_REDIS_PASSWORD` | No | Redis authentication password |
 | `DEPHEALTH_<NAME>_REDIS_DB` | No | Redis database number |
 | `DEPHEALTH_<NAME>_AMQP_URL` | No | AMQP connection URL |
+| `DEPHEALTH_<NAME>_LDAP_CHECK_METHOD` | No | LDAP check method: `root_dse` (default), `anonymous_bind`, `simple_bind`, `search` |
+| `DEPHEALTH_<NAME>_LDAP_BIND_DN` | No | Bind DN for `simple_bind` |
+| `DEPHEALTH_<NAME>_LDAP_BIND_PASSWORD` | No | Bind password for `simple_bind` (supports `_FILE`) |
+| `DEPHEALTH_<NAME>_LDAP_BASE_DN` | No | Base DN for `search` method |
+| `DEPHEALTH_<NAME>_LDAP_SEARCH_FILTER` | No | LDAP filter for `search` (default: `(objectClass=*)`) |
+| `DEPHEALTH_<NAME>_LDAP_SEARCH_SCOPE` | No | Search scope: `base`, `one`, `sub` |
+| `DEPHEALTH_<NAME>_LDAP_START_TLS` | No | Enable StartTLS for `ldap://` connections (`yes`/`no`) |
+| `DEPHEALTH_<NAME>_LDAP_TLS_SKIP_VERIFY` | No | Skip TLS certificate verification (`yes`/`no`) |
 
 *Either `URL` or `HOST` + `PORT` is required.
 
@@ -343,7 +353,23 @@ docker run -p 8080:8080 \
 
 ### Supported Dependency Types
 
-`http`, `grpc`, `tcp`, `postgres`, `mysql`, `redis`, `amqp`, `kafka`
+`http`, `grpc`, `tcp`, `postgres`, `mysql`, `redis`, `amqp`, `kafka`, `ldap`
+
+### LDAP Configuration Example
+
+```bash
+docker run -p 8080:8080 \
+  -e DEPHEALTH_NAME=ldap-monitor \
+  -e DEPHEALTH_GROUP=my-group \
+  -e DEPHEALTH_DEPS="corp-ldap:ldap" \
+  -e DEPHEALTH_CORP_LDAP_URL="ldap://ldap.example.com:389" \
+  -e DEPHEALTH_CORP_LDAP_CRITICAL=yes \
+  -e DEPHEALTH_CORP_LDAP_LDAP_CHECK_METHOD=simple_bind \
+  -e DEPHEALTH_CORP_LDAP_LDAP_BIND_DN="cn=healthcheck,dc=example,dc=com" \
+  -e DEPHEALTH_CORP_LDAP_LDAP_BIND_PASSWORD="secret" \
+  -e DEPHEALTH_CORP_LDAP_LDAP_START_TLS=yes \
+  uniproxy:latest
+```
 
 ### Configuration Example
 

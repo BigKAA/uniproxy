@@ -454,3 +454,149 @@ func TestLoadFromYAML_EmptyFile(t *testing.T) {
 		t.Errorf("Name = %q, want empty", cfg.Name)
 	}
 }
+
+func TestLoadFromYAML_IsEntry(t *testing.T) {
+	yamlContent := `
+name: test-app
+group: test
+isEntry: true
+dependencies:
+  - name: svc
+    type: http
+    url: http://svc:8080
+    critical: true
+`
+	path := writeTestYAML(t, yamlContent)
+	cfg, err := loadFromYAML(path)
+	if err != nil {
+		t.Fatalf("loadFromYAML() error: %v", err)
+	}
+	if !cfg.IsEntry {
+		t.Error("IsEntry = false, want true")
+	}
+}
+
+func TestLoadFromYAML_IsEntry_False(t *testing.T) {
+	yamlContent := `
+name: test-app
+group: test
+isEntry: false
+`
+	path := writeTestYAML(t, yamlContent)
+	cfg, err := loadFromYAML(path)
+	if err != nil {
+		t.Fatalf("loadFromYAML() error: %v", err)
+	}
+	if cfg.IsEntry {
+		t.Error("IsEntry = true, want false")
+	}
+}
+
+func TestLoadFromYAML_IsEntry_NotSet(t *testing.T) {
+	yamlContent := `
+name: test-app
+group: test
+`
+	path := writeTestYAML(t, yamlContent)
+	cfg, err := loadFromYAML(path)
+	if err != nil {
+		t.Fatalf("loadFromYAML() error: %v", err)
+	}
+	if cfg.IsEntry {
+		t.Error("IsEntry = true, want false (default)")
+	}
+}
+
+// --- LDAP YAML tests ---
+
+func TestLoadFromYAML_LDAP_Full(t *testing.T) {
+	yamlContent := `
+name: test-app
+group: test
+dependencies:
+  - name: corp-ldap
+    type: ldap
+    url: "ldaps://ad.corp.com:636"
+    critical: true
+    ldapCheckMethod: simple_bind
+    ldapBindDN: "cn=readonly,dc=corp,dc=com"
+    ldapBindPassword: "s3cret"
+    ldapBaseDN: "dc=corp,dc=com"
+    ldapSearchFilter: "(objectClass=*)"
+    ldapSearchScope: sub
+    ldapStartTLS: true
+    ldapTLSSkipVerify: false
+`
+	path := writeTestYAML(t, yamlContent)
+	cfg, err := loadFromYAML(path)
+	if err != nil {
+		t.Fatalf("loadFromYAML() error: %v", err)
+	}
+	if len(cfg.Dependencies) != 1 {
+		t.Fatalf("len(Dependencies) = %d, want 1", len(cfg.Dependencies))
+	}
+	dep := cfg.Dependencies[0]
+	if dep.Name != "corp-ldap" {
+		t.Errorf("Name = %q, want %q", dep.Name, "corp-ldap")
+	}
+	if dep.Type != "ldap" {
+		t.Errorf("Type = %q, want %q", dep.Type, "ldap")
+	}
+	if dep.LDAPCheckMethod != "simple_bind" {
+		t.Errorf("LDAPCheckMethod = %q, want %q", dep.LDAPCheckMethod, "simple_bind")
+	}
+	if dep.LDAPBindDN != "cn=readonly,dc=corp,dc=com" {
+		t.Errorf("LDAPBindDN = %q, want %q", dep.LDAPBindDN, "cn=readonly,dc=corp,dc=com")
+	}
+	if dep.LDAPBindPassword != "s3cret" {
+		t.Errorf("LDAPBindPassword = %q, want %q", dep.LDAPBindPassword, "s3cret")
+	}
+	if dep.LDAPBaseDN != "dc=corp,dc=com" {
+		t.Errorf("LDAPBaseDN = %q, want %q", dep.LDAPBaseDN, "dc=corp,dc=com")
+	}
+	if dep.LDAPSearchFilter != "(objectClass=*)" {
+		t.Errorf("LDAPSearchFilter = %q, want %q", dep.LDAPSearchFilter, "(objectClass=*)")
+	}
+	if dep.LDAPSearchScope != "sub" {
+		t.Errorf("LDAPSearchScope = %q, want %q", dep.LDAPSearchScope, "sub")
+	}
+	if dep.LDAPStartTLS == nil || !*dep.LDAPStartTLS {
+		t.Error("LDAPStartTLS should be true")
+	}
+	if dep.LDAPTLSSkipVerify == nil || *dep.LDAPTLSSkipVerify {
+		t.Error("LDAPTLSSkipVerify should be false")
+	}
+}
+
+func TestLoadFromYAML_LDAP_Minimal(t *testing.T) {
+	yamlContent := `
+name: test-app
+group: test
+dependencies:
+  - name: myldap
+    type: ldap
+    url: "ldap://ldap.local:389"
+    critical: false
+`
+	path := writeTestYAML(t, yamlContent)
+	cfg, err := loadFromYAML(path)
+	if err != nil {
+		t.Fatalf("loadFromYAML() error: %v", err)
+	}
+	if len(cfg.Dependencies) != 1 {
+		t.Fatalf("len(Dependencies) = %d, want 1", len(cfg.Dependencies))
+	}
+	dep := cfg.Dependencies[0]
+	if dep.Type != "ldap" {
+		t.Errorf("Type = %q, want %q", dep.Type, "ldap")
+	}
+	if dep.LDAPCheckMethod != "" {
+		t.Errorf("LDAPCheckMethod = %q, want empty (YAML doesn't set default)", dep.LDAPCheckMethod)
+	}
+	if dep.LDAPStartTLS != nil {
+		t.Error("LDAPStartTLS should be nil when not set")
+	}
+	if dep.LDAPTLSSkipVerify != nil {
+		t.Error("LDAPTLSSkipVerify should be nil when not set")
+	}
+}

@@ -48,6 +48,10 @@ spec:
             - name: DEPHEALTH_FETCH_TIMEOUT
               value: {{ $.Values.fetchTimeout | quote }}
             {{- end }}
+            {{- if $.Values.isentry }}
+            - name: DEPHEALTH_ISENTRY
+              value: {{ $.Values.isentry | quote }}
+            {{- end }}
             {{- if .connections }}
             - name: DEPHEALTH_DEPS
               value: {{ include "dephealth-uniproxy.depsValue" .connections | quote }}
@@ -108,6 +112,39 @@ spec:
             - name: {{ $envPrefix }}_AMQP_URL
               value: {{ .amqpURL | quote }}
             {{- end }}
+            {{- /* LDAP-specific options */}}
+            {{- if .ldapCheckMethod }}
+            - name: {{ $envPrefix }}_LDAP_CHECK_METHOD
+              value: {{ .ldapCheckMethod | quote }}
+            {{- end }}
+            {{- if .ldapBindDN }}
+            - name: {{ $envPrefix }}_LDAP_BIND_DN
+              value: {{ .ldapBindDN | quote }}
+            {{- end }}
+            {{- if .ldapBindPassword }}
+            - name: {{ $envPrefix }}_LDAP_BIND_PASSWORD
+              value: {{ .ldapBindPassword | quote }}
+            {{- end }}
+            {{- if .ldapBaseDN }}
+            - name: {{ $envPrefix }}_LDAP_BASE_DN
+              value: {{ .ldapBaseDN | quote }}
+            {{- end }}
+            {{- if .ldapSearchFilter }}
+            - name: {{ $envPrefix }}_LDAP_SEARCH_FILTER
+              value: {{ .ldapSearchFilter | quote }}
+            {{- end }}
+            {{- if .ldapSearchScope }}
+            - name: {{ $envPrefix }}_LDAP_SEARCH_SCOPE
+              value: {{ .ldapSearchScope | quote }}
+            {{- end }}
+            {{- if .ldapStartTLS }}
+            - name: {{ $envPrefix }}_LDAP_START_TLS
+              value: {{ .ldapStartTLS | quote }}
+            {{- end }}
+            {{- if .ldapTLSSkipVerify }}
+            - name: {{ $envPrefix }}_LDAP_TLS_SKIP_VERIFY
+              value: {{ .ldapTLSSkipVerify | quote }}
+            {{- end }}
             {{- /* Authentication: inline values */}}
             {{- if .bearerToken }}
             - name: {{ $envPrefix }}_BEARER_TOKEN
@@ -151,6 +188,13 @@ spec:
                 secretKeyRef:
                   name: {{ .auth.existingSecret }}
                   key: {{ .auth.basicPassKey }}
+            {{- end }}
+            {{- if and .auth.existingSecret .auth.ldapBindPasswordKey }}
+            - name: {{ $envPrefix }}_LDAP_BIND_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .auth.existingSecret }}
+                  key: {{ .auth.ldapBindPasswordKey }}
             {{- end }}
             {{- end }}
             {{- end }}

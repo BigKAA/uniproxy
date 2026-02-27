@@ -17,6 +17,11 @@ image:
 # Check interval in seconds (passed as DEPHEALTH_CHECK_INTERVAL env var).
 checkInterval: "10"
 
+# Optional label added to all dependency metrics.
+# When set to "yes", isentry=yes label is added to all metrics.
+# Useful for marking entry-point applications in topology visualization.
+isentry: ""
+
 # Global check timeout in seconds (passed as DEPHEALTH_TIMEOUT env var).
 # Empty string means SDK default.
 timeout: ""
@@ -85,12 +90,23 @@ configFile:
 #   headers: '{"X-Key":"val"}'   — HTTP-only: custom headers (JSON string)
 #   metadata: '{"key":"val"}'    — gRPC-only: custom metadata (JSON string)
 #
+# LDAP-specific options (for type: ldap connections):
+#   ldapCheckMethod: "root_dse"          — check method: root_dse (default), anonymous_bind, simple_bind, search
+#   ldapBindDN: "cn=admin,dc=example"    — bind DN for simple_bind
+#   ldapBindPassword: "secret"           — bind password for simple_bind (inline)
+#   ldapBaseDN: "dc=example,dc=com"      — base DN for search method
+#   ldapSearchFilter: "(objectClass=*)"  — LDAP filter for search method
+#   ldapSearchScope: "base"              — search scope: base, one, sub
+#   ldapStartTLS: "true"                 — enable StartTLS for ldap:// connections
+#   ldapTLSSkipVerify: "true"            — skip TLS certificate verification
+#
 # Using Kubernetes Secrets (recommended for production):
 #   auth:
 #     existingSecret: "my-secret"        — K8s Secret name
 #     bearerTokenKey: "token"            — key in Secret for bearer token
 #     basicUserKey: "username"           — key in Secret for Basic Auth user
 #     basicPassKey: "password"           — key in Secret for Basic Auth password
+#     ldapBindPasswordKey: "ldap-pass"   — key in Secret for LDAP bind password
 #
 # Note: inline values and existingSecret can be combined (e.g., inline headers + secret bearer).
 # Only one auth method per connection: bearer OR basic auth (not both).

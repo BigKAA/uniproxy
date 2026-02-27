@@ -1,7 +1,7 @@
 # uniproxy
 
 [![Go Version](https://img.shields.io/badge/go-1.25-00ADD8.svg)](https://golang.org/)
-[![dephealth SDK](https://img.shields.io/badge/dephealth_SDK-v0.4.2-blue.svg)](https://github.com/BigKAA/topologymetrics)
+[![dephealth SDK](https://img.shields.io/badge/dephealth_SDK-v0.8.0-blue.svg)](https://github.com/BigKAA/topologymetrics)
 [![License](https://img.shields.io/badge/license-Apache%202.0-green.svg)](./LICENSE)
 
 **Универсальный тестовый прокси для мониторинга здоровья зависимостей с dephealth SDK**
@@ -14,7 +14,8 @@
 
 ### Возможности
 
-- Проверка здоровья зависимостей: HTTP, gRPC, PostgreSQL, MySQL, Redis, AMQP, Kafka, TCP
+- Проверка здоровья зависимостей: HTTP, gRPC, PostgreSQL, MySQL, Redis, AMQP, Kafka, LDAP, TCP
+- Опциональная метка `isentry` для обозначения точек входа в визуализации топологии
 - Enriched Status API — детальная информация о зависимостях и рекурсивный просмотр цепочек HTTP
 - Конфигурация через переменные окружения или YAML-файл (12-factor app)
 - Серверная аутентификация для эндпоинтов статуса и метрик (Basic, Bearer, API Key)
@@ -167,6 +168,7 @@ dependencies:
 | `DEPHEALTH_CHECK_INTERVAL` | Нет | `10` | Интервал проверки здоровья в секундах |
 | `DEPHEALTH_TIMEOUT` | Нет | SDK default | Глобальный таймаут проверки в секундах |
 | `DEPHEALTH_FETCH_TIMEOUT` | Нет | `5` | Таймаут рекурсивного HTTP detail fetch в секундах |
+| `DEPHEALTH_ISENTRY` | Нет | — | Добавить метку `isentry=yes` ко всем метрикам зависимостей (`yes`/`no`) |
 
 ### Переменные для каждой зависимости
 
@@ -189,6 +191,14 @@ dependencies:
 | `DEPHEALTH_<ИМЯ>_REDIS_PASSWORD` | Нет | Пароль Redis |
 | `DEPHEALTH_<ИМЯ>_REDIS_DB` | Нет | Номер базы Redis |
 | `DEPHEALTH_<ИМЯ>_AMQP_URL` | Нет | URL подключения AMQP |
+| `DEPHEALTH_<ИМЯ>_LDAP_CHECK_METHOD` | Нет | Метод проверки LDAP: `root_dse` (по умолчанию), `anonymous_bind`, `simple_bind`, `search` |
+| `DEPHEALTH_<ИМЯ>_LDAP_BIND_DN` | Нет | DN для `simple_bind` |
+| `DEPHEALTH_<ИМЯ>_LDAP_BIND_PASSWORD` | Нет | Пароль для `simple_bind` (поддерживает `_FILE`) |
+| `DEPHEALTH_<ИМЯ>_LDAP_BASE_DN` | Нет | Базовый DN для метода `search` |
+| `DEPHEALTH_<ИМЯ>_LDAP_SEARCH_FILTER` | Нет | LDAP-фильтр для `search` (по умолчанию: `(objectClass=*)`) |
+| `DEPHEALTH_<ИМЯ>_LDAP_SEARCH_SCOPE` | Нет | Область поиска: `base`, `one`, `sub` |
+| `DEPHEALTH_<ИМЯ>_LDAP_START_TLS` | Нет | Включить StartTLS для `ldap://` подключений (`yes`/`no`) |
+| `DEPHEALTH_<ИМЯ>_LDAP_TLS_SKIP_VERIFY` | Нет | Пропустить проверку TLS-сертификата (`yes`/`no`) |
 
 *Требуется либо `URL`, либо `HOST` + `PORT`.
 
@@ -343,7 +353,23 @@ docker run -p 8080:8080 \
 
 ### Поддерживаемые типы зависимостей
 
-`http`, `grpc`, `tcp`, `postgres`, `mysql`, `redis`, `amqp`, `kafka`
+`http`, `grpc`, `tcp`, `postgres`, `mysql`, `redis`, `amqp`, `kafka`, `ldap`
+
+### Пример конфигурации LDAP
+
+```bash
+docker run -p 8080:8080 \
+  -e DEPHEALTH_NAME=ldap-monitor \
+  -e DEPHEALTH_GROUP=my-group \
+  -e DEPHEALTH_DEPS="corp-ldap:ldap" \
+  -e DEPHEALTH_CORP_LDAP_URL="ldap://ldap.example.com:389" \
+  -e DEPHEALTH_CORP_LDAP_CRITICAL=yes \
+  -e DEPHEALTH_CORP_LDAP_LDAP_CHECK_METHOD=simple_bind \
+  -e DEPHEALTH_CORP_LDAP_LDAP_BIND_DN="cn=healthcheck,dc=example,dc=com" \
+  -e DEPHEALTH_CORP_LDAP_LDAP_BIND_PASSWORD="secret" \
+  -e DEPHEALTH_CORP_LDAP_LDAP_START_TLS=yes \
+  uniproxy:latest
+```
 
 ### Пример конфигурации
 

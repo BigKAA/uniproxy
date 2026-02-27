@@ -102,7 +102,7 @@ func buildOptions(cfg *config.Config, logger *slog.Logger) ([]dephealth.Option, 
 	}
 
 	for _, dep := range cfg.Dependencies {
-		opt, err := buildDependencyOption(dep)
+		opt, err := buildDependencyOption(dep, cfg.IsEntry)
 		if err != nil {
 			return nil, err
 		}
@@ -112,7 +112,8 @@ func buildOptions(cfg *config.Config, logger *slog.Logger) ([]dephealth.Option, 
 }
 
 // buildDependencyOption creates a dephealth dependency option from config.
-func buildDependencyOption(dep config.Dependency) (dephealth.Option, error) {
+// When isEntry is true, the isentry=yes label is added to the dependency metrics.
+func buildDependencyOption(dep config.Dependency, isEntry bool) (dephealth.Option, error) {
 	var depOpts []dephealth.DependencyOption
 
 	// Connection source: URL or explicit host+port.
@@ -123,6 +124,10 @@ func buildDependencyOption(dep config.Dependency) (dephealth.Option, error) {
 	}
 
 	depOpts = append(depOpts, dephealth.Critical(dep.Critical))
+
+	if isEntry {
+		depOpts = append(depOpts, dephealth.WithLabel("isentry", "yes"))
+	}
 
 	if dep.CheckInterval > 0 {
 		depOpts = append(depOpts, dephealth.CheckInterval(dep.CheckInterval))
@@ -190,6 +195,31 @@ func buildDependencyOption(dep config.Dependency) (dephealth.Option, error) {
 		if dep.AMQPURL != "" {
 			depOpts = append(depOpts, dephealth.WithAMQPURL(dep.AMQPURL))
 		}
+	case "ldap":
+		if dep.LDAPCheckMethod != "" {
+			depOpts = append(depOpts, dephealth.WithLDAPCheckMethod(dep.LDAPCheckMethod))
+		}
+		if dep.LDAPBindDN != "" {
+			depOpts = append(depOpts, dephealth.WithLDAPBindDN(dep.LDAPBindDN))
+		}
+		if dep.LDAPBindPassword != "" {
+			depOpts = append(depOpts, dephealth.WithLDAPBindPassword(dep.LDAPBindPassword))
+		}
+		if dep.LDAPBaseDN != "" {
+			depOpts = append(depOpts, dephealth.WithLDAPBaseDN(dep.LDAPBaseDN))
+		}
+		if dep.LDAPSearchFilter != "" {
+			depOpts = append(depOpts, dephealth.WithLDAPSearchFilter(dep.LDAPSearchFilter))
+		}
+		if dep.LDAPSearchScope != "" {
+			depOpts = append(depOpts, dephealth.WithLDAPSearchScope(dep.LDAPSearchScope))
+		}
+		if dep.LDAPStartTLS != nil {
+			depOpts = append(depOpts, dephealth.WithLDAPStartTLS(*dep.LDAPStartTLS))
+		}
+		if dep.LDAPTLSSkipVerify != nil {
+			depOpts = append(depOpts, dephealth.WithLDAPTLSSkipVerify(*dep.LDAPTLSSkipVerify))
+		}
 	}
 
 	// Factory by type.
@@ -210,6 +240,8 @@ func buildDependencyOption(dep config.Dependency) (dephealth.Option, error) {
 		return dephealth.AMQP(dep.Name, depOpts...), nil
 	case "kafka":
 		return dephealth.Kafka(dep.Name, depOpts...), nil
+	case "ldap":
+		return dephealth.LDAP(dep.Name, depOpts...), nil
 	default:
 		return nil, fmt.Errorf("unsupported dependency type %q for %q", dep.Type, dep.Name)
 	}
