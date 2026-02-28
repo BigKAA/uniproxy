@@ -89,7 +89,7 @@ func TestHandleRoot_SimpleFormat_NoDetailParam(t *testing.T) {
 		srv.Handler().ServeHTTP(rec, req)
 
 		var resp map[string]json.RawMessage
-		json.NewDecoder(rec.Body).Decode(&resp)
+		_ = json.NewDecoder(rec.Body).Decode(&resp)
 		if _, ok := resp["health"]; !ok {
 			t.Errorf("URL %q: expected 'health' field (simple format)", url)
 		}
@@ -212,15 +212,15 @@ func TestHandleRoot_DetailFormat_JSONFields(t *testing.T) {
 	srv.Handler().ServeHTTP(rec, req)
 
 	var raw map[string]json.RawMessage
-	json.NewDecoder(rec.Body).Decode(&raw)
+	_ = json.NewDecoder(rec.Body).Decode(&raw)
 
 	var deps map[string]json.RawMessage
-	json.Unmarshal(raw["dependencies"], &deps)
+	_ = json.Unmarshal(raw["dependencies"], &deps)
 	depJSON := string(deps["svc:h:80"])
 
 	// Check for SDK's latency_ms format.
 	var depFields map[string]json.RawMessage
-	json.Unmarshal(deps["svc:h:80"], &depFields)
+	_ = json.Unmarshal(deps["svc:h:80"], &depFields)
 
 	if _, ok := depFields["latency_ms"]; !ok {
 		t.Errorf("missing latency_ms field in JSON: %s", depJSON)
@@ -261,7 +261,7 @@ func TestDependencyDetail_MarshalJSON_WithResponse(t *testing.T) {
 	}
 
 	var fields map[string]json.RawMessage
-	json.Unmarshal(data, &fields)
+	_ = json.Unmarshal(data, &fields)
 	if _, ok := fields["response"]; !ok {
 		t.Error("response field missing when set")
 	}
@@ -278,16 +278,16 @@ func TestParseDepth(t *testing.T) {
 		input string
 		want  int
 	}{
-		{"", 1},       // default
-		{"0", 0},      // explicit 0
-		{"1", 1},      // explicit 1
-		{"3", 3},      // explicit 3
-		{"10", 10},    // max
-		{"11", 10},    // capped at 10
-		{"100", 10},   // capped at 10
-		{"-1", 1},     // negative → default
-		{"abc", 1},    // invalid → default
-		{"-5", 1},     // negative → default
+		{"", 1},     // default
+		{"0", 0},    // explicit 0
+		{"1", 1},    // explicit 1
+		{"3", 3},    // explicit 3
+		{"10", 10},  // max
+		{"11", 10},  // capped at 10
+		{"100", 10}, // capped at 10
+		{"-1", 1},   // negative → default
+		{"abc", 1},  // invalid → default
+		{"-5", 1},   // negative → default
 	}
 	for _, tt := range tests {
 		got := parseDepth(tt.input)
@@ -338,7 +338,7 @@ func TestHandleRoot_DetailFormat_EmptyDeps(t *testing.T) {
 	srv.Handler().ServeHTTP(rec, req)
 
 	var resp DetailStatusResponse
-	json.NewDecoder(rec.Body).Decode(&resp)
+	_ = json.NewDecoder(rec.Body).Decode(&resp)
 	if len(resp.Dependencies) != 0 {
 		t.Errorf("len(Dependencies) = %d, want 0", len(resp.Dependencies))
 	}
@@ -360,7 +360,7 @@ func TestHandleRoot_DetailFormat_NilHealthDetails(t *testing.T) {
 	}
 
 	var raw map[string]json.RawMessage
-	json.NewDecoder(rec.Body).Decode(&raw)
+	_ = json.NewDecoder(rec.Body).Decode(&raw)
 	if _, ok := raw["dependencies"]; !ok {
 		t.Error("missing dependencies field")
 	}
@@ -389,7 +389,7 @@ func TestHandleRoot_DetailFormat_UnknownState(t *testing.T) {
 	srv.Handler().ServeHTTP(rec, req)
 
 	var resp DetailStatusResponse
-	json.NewDecoder(rec.Body).Decode(&resp)
+	_ = json.NewDecoder(rec.Body).Decode(&resp)
 	dep := resp.Dependencies["svc:h:80"]
 	if dep.Healthy != nil {
 		t.Errorf("Healthy = %v, want nil (unknown)", dep.Healthy)

@@ -86,7 +86,7 @@ func buildReplaceAttr(cfg config.LogConfig) func([]string, slog.Attr) slog.Attr 
 				case "unixmilli":
 					// Unix timestamp as integer milliseconds.
 					a = slog.Int64(a.Key, t.UnixMilli())
-				// "rfc3339nano" is the slog default — no transformation needed.
+					// "rfc3339nano" is the slog default — no transformation needed.
 				}
 			}
 		case slog.LevelKey:

@@ -647,7 +647,7 @@ func resolveSecret(envKey string) (string, error) {
 // The envKey parameter is used only for error messages to identify which env var
 // pointed to this file.
 func readSecretFile(path, envKey string) (string, error) {
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) //nolint:gosec // path comes from env var config (_FILE suffix pattern)
 	if err != nil {
 		return "", fmt.Errorf("%s: cannot read file %q: %w", envKey, path, err)
 	}

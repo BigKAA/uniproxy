@@ -16,7 +16,7 @@ func TestFetchHTTPResponse_Success(t *testing.T) {
 	// Simulated uniproxy downstream returning detail response.
 	downstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"name":         "downstream",
 			"podName":      "pod-1",
 			"namespace":    "ns",
@@ -46,7 +46,7 @@ func TestFetchHTTPResponse_DepthPropagation(t *testing.T) {
 	downstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		receivedDepth = r.URL.Query().Get("depth")
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"name":"ds"}`))
+		_, _ = w.Write([]byte(`{"name":"ds"}`))
 	}))
 	defer downstream.Close()
 
@@ -69,7 +69,7 @@ func TestFetchHTTPResponse_Timeout(t *testing.T) {
 	// Slow server should result in nil response.
 	downstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(2 * time.Second)
-		w.Write([]byte(`{"name":"slow"}`))
+		_, _ = w.Write([]byte(`{"name":"slow"}`))
 	}))
 	defer downstream.Close()
 
@@ -90,7 +90,7 @@ func TestFetchHTTPResponse_UnreachableHost(t *testing.T) {
 
 func TestFetchHTTPResponse_NonJSONResponse(t *testing.T) {
 	downstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("this is not json"))
+		_, _ = w.Write([]byte("this is not json"))
 	}))
 	defer downstream.Close()
 
@@ -104,7 +104,7 @@ func TestFetchHTTPResponse_NonJSONResponse(t *testing.T) {
 func TestFetchHTTPResponse_Non200Status(t *testing.T) {
 	downstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte(`{"error":"fail"}`))
+		_, _ = w.Write([]byte(`{"error":"fail"}`))
 	}))
 	defer downstream.Close()
 
@@ -119,7 +119,7 @@ func TestFetchHTTPResponse_DepthZero(t *testing.T) {
 	called := false
 	downstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		called = true
-		w.Write([]byte(`{"name":"ds"}`))
+		_, _ = w.Write([]byte(`{"name":"ds"}`))
 	}))
 	defer downstream.Close()
 
@@ -139,7 +139,7 @@ func TestHandleDetail_WithHTTPFetch(t *testing.T) {
 	// Start a downstream server simulating another uniproxy instance.
 	downstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"name":         "backend",
 			"podName":      "pod-b",
 			"namespace":    "ns",
@@ -227,7 +227,7 @@ func TestHandleDetail_WithHTTPFetch(t *testing.T) {
 		t.Fatal("missing dependency db:pg.svc:5432")
 	}
 	var pgFields map[string]json.RawMessage
-	json.Unmarshal(pgDepJSON, &pgFields)
+	_ = json.Unmarshal(pgDepJSON, &pgFields)
 	if _, hasResp := pgFields["response"]; hasResp {
 		t.Error("non-HTTP dep should not have response field")
 	}
@@ -238,7 +238,7 @@ func TestHandleDetail_DepthZero_NoFetch(t *testing.T) {
 	called := false
 	downstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		called = true
-		w.Write([]byte(`{"name":"ds"}`))
+		_, _ = w.Write([]byte(`{"name":"ds"}`))
 	}))
 	defer downstream.Close()
 
@@ -268,9 +268,9 @@ func TestHandleDetail_DepthZero_NoFetch(t *testing.T) {
 	}
 
 	var raw map[string]json.RawMessage
-	json.NewDecoder(rec.Body).Decode(&raw)
+	_ = json.NewDecoder(rec.Body).Decode(&raw)
 	var deps map[string]json.RawMessage
-	json.Unmarshal(raw["dependencies"], &deps)
+	_ = json.Unmarshal(raw["dependencies"], &deps)
 
 	key := fmt.Sprintf("svc:%s:%s", host, port)
 	depJSON, ok := deps[key]
@@ -278,7 +278,7 @@ func TestHandleDetail_DepthZero_NoFetch(t *testing.T) {
 		t.Fatalf("missing dependency %s", key)
 	}
 	var fields map[string]json.RawMessage
-	json.Unmarshal(depJSON, &fields)
+	_ = json.Unmarshal(depJSON, &fields)
 	if _, hasResp := fields["response"]; hasResp {
 		t.Error("response field should be absent with depth=0")
 	}

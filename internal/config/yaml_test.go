@@ -42,7 +42,7 @@ func writeTestYAML(t *testing.T, content string) string {
 	t.Helper()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
-	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
 		t.Fatal(err)
 	}
 	return path
@@ -268,9 +268,9 @@ name: minimal
 
 func TestLoadFromYAML_DepAuth(t *testing.T) {
 	tests := []struct {
-		name      string
-		yaml      string
-		checkDep  func(t *testing.T, dep Dependency)
+		name     string
+		yaml     string
+		checkDep func(t *testing.T, dep Dependency)
 	}{
 		{
 			name: "bearer token",

@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/BigKAA/topologymetrics/sdk-go/dephealth"
 	// Register built-in checker factories (HTTP, gRPC, Redis, Postgres, etc.)
@@ -91,8 +92,9 @@ func main() {
 	// Create the HTTP server with Chi router, auth middleware, and route handlers.
 	srv := server.New(dh, cfg.Name, cfg.FetchTimeout, cfg.Auth)
 	httpServer := &http.Server{
-		Addr:    cfg.ListenAddr,
-		Handler: srv.Handler(),
+		Addr:              cfg.ListenAddr,
+		Handler:           srv.Handler(),
+		ReadHeaderTimeout: 10 * time.Second,
 	}
 
 	// Start the HTTP server in a separate goroutine so the main goroutine
@@ -111,7 +113,7 @@ func main() {
 
 	// Graceful shutdown: stop health checks first, then close the HTTP server.
 	dh.Stop()
-	httpServer.Close()
+	_ = httpServer.Close()
 }
 
 // buildOptions creates the slice of dephealth SDK options from the application config.

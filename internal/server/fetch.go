@@ -53,7 +53,7 @@ func fetchHTTPResponse(ctx context.Context, host, port string, depth int, timeou
 		slog.Debug("fetch: request failed", "url", url, "error", err)
 		return nil
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	// Only accept successful responses.
 	if resp.StatusCode != http.StatusOK {

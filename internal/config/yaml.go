@@ -110,7 +110,7 @@ type yamlDepAuth struct {
 // loadFromYAML reads a YAML configuration file at the given path and converts
 // it to the application Config struct. This is called when CONFIG_FILE env var is set.
 func loadFromYAML(path string) (*Config, error) {
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) //nolint:gosec // path comes from CONFIG_FILE env var
 	if err != nil {
 		return nil, err
 	}

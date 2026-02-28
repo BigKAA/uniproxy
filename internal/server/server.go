@@ -93,10 +93,10 @@ func (d DependencyDetail) MarshalJSON() ([]byte, error) {
 // Server is the uniproxy HTTP server. It wraps a Chi router configured with
 // auth middleware, probe endpoints, status API, and Prometheus metrics handler.
 type Server struct {
-	router       chi.Router       // Chi router with configured routes and middleware
-	dh           HealthChecker    // dephealth SDK instance for querying health status
-	name         string           // application name for status responses
-	fetchTimeout time.Duration    // timeout for recursive HTTP fetch requests
+	router       chi.Router        // Chi router with configured routes and middleware
+	dh           HealthChecker     // dephealth SDK instance for querying health status
+	name         string            // application name for status responses
+	fetchTimeout time.Duration     // timeout for recursive HTTP fetch requests
 	authCfg      config.AuthConfig // zone-based auth config for status and metrics endpoints
 }
 
@@ -260,7 +260,7 @@ func parseDepth(s string) int {
 // No authentication is required.
 func (s *Server) handleHealthz(w http.ResponseWriter, _ *http.Request) {
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte("ok"))
+	_, _ = w.Write([]byte("ok"))
 }
 
 // handleReadyz handles GET /readyz — the Kubernetes readiness probe.
@@ -268,5 +268,5 @@ func (s *Server) handleHealthz(w http.ResponseWriter, _ *http.Request) {
 // to receive traffic. No authentication is required.
 func (s *Server) handleReadyz(w http.ResponseWriter, _ *http.Request) {
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte("ok"))
+	_, _ = w.Write([]byte("ok"))
 }
