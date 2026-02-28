@@ -111,14 +111,48 @@ kubectl get all -n uniproxy-ns1
 kubectl logs -n uniproxy-ns1 deployment/uniproxy-01
 ```
 
-### Linting
+### Linting & Code Quality
+
+All quality checks run via Docker (no local tool installation required). See `Makefile` for details.
 
 ```bash
-# Go linting (if golangci-lint is available)
-golangci-lint run
+# Pull all required Docker images (first time)
+make pull
 
-# Helm chart linting
-helm lint ./deploy/helm/uniproxy
+# Static analysis (golangci-lint with .golangci.yml config)
+make lint
+
+# Security check (gosec only)
+make security
+
+# Dependency vulnerability scan (govulncheck)
+make audit
+
+# Dead code detection
+make deadcode
+
+# Code formatting (goimports + gofmt)
+make fmt
+
+# Helm chart validation
+make helm-lint
+
+# Dockerfile best practices (hadolint)
+make hadolint
+
+# Run ALL checks (lint + test + audit + deadcode + helm-lint + hadolint)
+make check-all
+
+# Build / test
+make build
+make test
+make test-coverage
+
+# Cleanup Docker volume caches
+make clean
+
+# Show all available targets
+make help
 ```
 
 ## Architecture & Code Structure
