@@ -430,7 +430,7 @@ docker run -p 8080:8080 \
     "backend:backend.svc:8080": {
       "healthy": true,
       "status": "ok",
-      "detail": "200_ok",
+      "detail": "ok",
       "latency_ms": 12.5,
       "type": "http",
       "name": "backend",

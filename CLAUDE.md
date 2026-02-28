@@ -130,70 +130,97 @@ helm lint ./deploy/helm/uniproxy
 │   main.go   │  Entry point
 └──────┬──────┘
        │
-       ├─> internal/config      Parse env vars (DEPHEALTH_NAME, DEPHEALTH_DEPS, etc.)
-       │                        Build Config struct with dependencies
+       ├─> internal/config      Parse env vars + YAML config (CONFIG_FILE)
+       │                        Build Config struct with dependencies, auth, logging
+       │
+       ├─> internal/logging     Structured logging setup (text/json, configurable keys)
+       │
+       ├─> internal/auth        Server-side auth middleware (Basic/Bearer/APIKey)
+       │                        Zone-based: status (/), metrics (/metrics)
        │
        ├─> dephealth SDK        Initialize health checker with parsed dependencies
        │   (external)           Start background health checks (interval-based)
-       │                        Register Prometheus metrics
+       │                        Register Prometheus metrics (4 metrics)
        │
        └─> internal/server      HTTP server (Chi router)
                                 Endpoints: /, /healthz, /readyz, /metrics
+                                Detail mode: /?detail=true&depth=N (recursive HTTP fetch)
                                 Expose SDK metrics via /metrics
 ```
 
 ### Key Components
 
 **main.go**
-- Loads configuration from environment variables via `internal/config`
+- Loads configuration from environment variables / YAML via `internal/config`
+- Initializes structured logging via `internal/logging`
 - Initializes dephealth SDK with dependency configurations
 - Starts background health checks (SDK handles periodic checking)
-- Starts HTTP server with Chi router
+- Starts HTTP server with Chi router and auth middleware
 - Handles graceful shutdown on SIGINT/SIGTERM
 
+**internal/auth/**
+- Server-side authentication middleware (Basic Auth, Bearer token, API Key)
+- Zone-based: independent auth settings for status (`/`) and metrics (`/metrics`) endpoints
+- Health probes (`/healthz`, `/readyz`) always open
+
+**internal/logging/**
+- Structured logging setup with `slog`
+- Supports text and JSON output formats
+- Configurable JSON keys (`LOG_TIME_KEY`, `LOG_LEVEL_KEY`, `LOG_MESSAGE_KEY`, `LOG_SOURCE_KEY`)
+
 **internal/config/config.go**
-- Parses environment variables into `Config` struct
-- Required vars: `DEPHEALTH_NAME`, `DEPHEALTH_GROUP`, `DEPHEALTH_DEPS`
-- Optional: `LISTEN_ADDR`, `LOG_LEVEL`, `DEPHEALTH_CHECK_INTERVAL`
+- Parses environment variables and optional YAML config (`CONFIG_FILE`) into `Config` struct
+- Required vars: `DEPHEALTH_NAME`, `DEPHEALTH_GROUP`
+- Optional: `LISTEN_ADDR`, `LOG_FORMAT`, `LOG_LEVEL`, `LOG_TIME_FORMAT`, `LOG_ADD_SOURCE`, `LOG_*_KEY`, `DEPHEALTH_CHECK_INTERVAL`, `DEPHEALTH_TIMEOUT`, `DEPHEALTH_FETCH_TIMEOUT`, `DEPHEALTH_ISENTRY`
 - Per-dependency vars: `DEPHEALTH_<NAME>_URL` or `DEPHEALTH_<NAME>_HOST` + `DEPHEALTH_<NAME>_PORT`
+- Server auth: `AUTH_METHOD`, `AUTH_USER`, `AUTH_PASS`, `AUTH_TOKEN`, `AUTH_API_KEY` + per-zone overrides (`AUTH_STATUS_*`, `AUTH_METRICS_*`)
+- Dependency auth: `DEPHEALTH_BEARER_TOKEN`, `DEPHEALTH_BASIC_USER/PASS`, `DEPHEALTH_HEADERS`, `DEPHEALTH_METADATA` (global and per-dependency)
+- `_FILE` suffix pattern for secrets (e.g., `DEPHEALTH_BEARER_TOKEN_FILE`)
 - Dependency types: `http`, `redis`, `postgres`, `grpc`, `tcp`, `mysql`, `amqp`, `kafka`, `ldap`
+- YAML config priority: env vars always override YAML values; `DEPHEALTH_DEPS` replaces all YAML dependencies
 
 **internal/server/server.go**
-- HTTP server using `go-chi/chi` router
+- HTTP server using `go-chi/chi` router with zone-based auth middleware
 - Routes:
-  - `GET /` — JSON status (name, podName, namespace, health map)
-  - `GET /healthz` — Liveness probe (always returns 200 OK)
-  - `GET /readyz` — Readiness probe (always returns 200 OK)
-  - `GET /metrics` — Prometheus metrics (from SDK)
+  - `GET /` — JSON status (name, podName, namespace, health map). Supports `?detail=true` for enriched response with `HealthDetails()` and `?depth=N` for recursive HTTP chain fetch (0–10, default 1). Auth zone: `status`
+  - `GET /healthz` — Liveness probe (always returns 200 OK, no auth)
+  - `GET /readyz` — Readiness probe (always returns 200 OK, no auth)
+  - `GET /metrics` — Prometheus metrics via `promhttp.Handler()`. Auth zone: `metrics`
 
 **External Dependency: dephealth SDK**
-- `github.com/BigKAA/topologymetrics/sdk-go/dephealth`
+- `github.com/BigKAA/topologymetrics/sdk-go/dephealth` v0.8.0
 - Handles all health checking logic (HTTP, gRPC, database connections, etc.)
-- Exports Prometheus metrics:
-  - `app_dependency_health` (gauge: 1=UP, 0=DOWN)
-  - `app_dependency_latency_seconds` (histogram)
+- Exports 4 Prometheus metrics:
+  - `app_dependency_health` (gauge: 1=healthy, 0=unhealthy)
+  - `app_dependency_latency_seconds` (histogram, buckets: 1ms–5s)
+  - `app_dependency_status` (gauge, enum pattern: one status value set to 1, rest to 0; label `status` with values: ok, timeout, connection_error, dns_error, auth_error, tls_error, unhealthy, error)
+  - `app_dependency_status_detail` (gauge, info pattern: always 1 with `detail` label containing human-readable reason)
+- Base labels (all metrics): `name`, `group`, `dependency`, `type`, `host`, `port`, `critical`
+- Custom labels supported via `WithLabel()` / `DEPHEALTH_<DEP>_LABEL_<KEY>` env vars
 - Built-in checker factories registered via `_ "github.com/BigKAA/topologymetrics/sdk-go/dephealth/checks"`
 
 ### Configuration Model
 
-uniproxy uses a **declarative configuration** approach:
-1. User defines dependencies in environment variables (JSON format or individual vars)
-2. `internal/config` parses these into structured `Config`
+uniproxy uses a **declarative configuration** approach with two methods:
+1. **Environment variables** (always works) or **YAML config file** (`CONFIG_FILE`), env vars always override YAML
+2. `internal/config` parses these into structured `Config` (dependencies, auth, logging, etc.)
 3. `main.go` builds `dephealth.Option` slice from config
 4. SDK creates health checkers for each dependency
-5. SDK runs checks in background and updates Prometheus metrics
+5. SDK runs checks in background and updates Prometheus metrics (4 metrics)
 
 Optional global `isentry` label (`DEPHEALTH_ISENTRY=yes`) marks entry-point applications in topology visualization by adding `isentry=yes` to all dependency metrics.
+
+Server-side authentication protects status (`/`) and metrics (`/metrics`) endpoints independently via zone-based auth config. Dependency-side authentication supports bearer tokens, basic auth, custom headers/metadata for HTTP/gRPC dependencies.
 
 This allows **instance-based deployment**: multiple uniproxy instances with different dependency configs can run in the same namespace.
 
 ### Deployment Model (Helm)
 
-Helm chart is designed for **instance-based deployment**:
-- Each Helm release = one uniproxy instance
-- Instance-specific config in `deploy/helm/uniproxy/instances/<name>.yaml`
-- Common defaults in `values.yaml`
-- Supports multiple instances per namespace with different dependency configurations
+Two Helm charts available:
+- **Standard chart** (`charts/uniproxy/`): Single-instance per release, full support for Service types, Ingress, Gateway API, server auth, YAML config via ConfigMap
+- **Legacy chart** (`deploy/helm/uniproxy/`): Multi-instance per release, instance-specific config in `instances/<name>.yaml`
+
+Both support instance-based deployment with different dependency configurations per namespace.
 
 ## Development Plans
 

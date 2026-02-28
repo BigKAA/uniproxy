@@ -430,7 +430,7 @@ Returns detailed dependency information from the SDK's `HealthDetails()` API.
     "backend:backend.svc:8080": {
       "healthy": true,
       "status": "ok",
-      "detail": "200_ok",
+      "detail": "ok",
       "latency_ms": 12.5,
       "type": "http",
       "name": "backend",

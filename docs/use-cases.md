@@ -258,6 +258,7 @@ services:
     image: uniproxy:dev
     environment:
       DEPHEALTH_NAME: frontend
+      DEPHEALTH_GROUP: my-group
       DEPHEALTH_DEPS: "api:http,cache:redis"
       DEPHEALTH_API_URL: "http://api-proxy:8080"
       DEPHEALTH_API_CRITICAL: "yes"
@@ -271,6 +272,7 @@ services:
     image: uniproxy:dev
     environment:
       DEPHEALTH_NAME: api
+      DEPHEALTH_GROUP: my-group
       DEPHEALTH_DEPS: "db:postgres,cache:redis"
       DEPHEALTH_DB_URL: "postgres://app:secret@postgres:5432/mydb"
       DEPHEALTH_DB_CRITICAL: "yes"
@@ -343,6 +345,7 @@ After=network.target
 Type=simple
 ExecStart=/usr/local/bin/uniproxy
 Environment=DEPHEALTH_NAME=web-server-01
+Environment=DEPHEALTH_GROUP=infrastructure
 Environment=DEPHEALTH_DEPS=app-server:http
 Environment=DEPHEALTH_APP_SERVER_HOST=192.168.1.20
 Environment=DEPHEALTH_APP_SERVER_PORT=8080
@@ -368,6 +371,7 @@ After=network.target
 Type=simple
 ExecStart=/usr/local/bin/uniproxy
 Environment=DEPHEALTH_NAME=app-server-01
+Environment=DEPHEALTH_GROUP=infrastructure
 Environment=DEPHEALTH_DEPS=database:postgres,cache:redis,message-queue:amqp
 Environment=DEPHEALTH_DATABASE_URL=postgres://user:pass@192.168.1.30:5432/appdb
 Environment=DEPHEALTH_DATABASE_CRITICAL=yes
@@ -450,6 +454,7 @@ dependencies:
 
 ```bash
 DEPHEALTH_NAME=legacy-api
+DEPHEALTH_GROUP=infrastructure
 DEPHEALTH_DEPS="oracle:tcp"
 DEPHEALTH_ORACLE_HOST=10.0.5.200
 DEPHEALTH_ORACLE_PORT=1521
@@ -511,12 +516,14 @@ spec:
         - containerPort: 80
 
     - name: health-sidecar
-      image: uniproxy:0.4.1
+      image: uniproxy:0.7.0
       ports:
         - containerPort: 8080
       env:
         - name: DEPHEALTH_NAME
           value: "legacy-app"
+        - name: DEPHEALTH_GROUP
+          value: "production"
         - name: DEPHEALTH_DEPS
           value: "main-db:postgres,session-cache:redis,payment-api:http"
         - name: DEPHEALTH_MAIN_DB_URL
@@ -551,6 +558,7 @@ services:
     network_mode: "service:legacy-app"  # shares network namespace
     environment:
       DEPHEALTH_NAME: legacy-app
+      DEPHEALTH_GROUP: production
       DEPHEALTH_DEPS: "db:postgres,cache:redis"
       DEPHEALTH_DB_URL: "postgres://user:pass@db-host:5432/app"
       DEPHEALTH_DB_CRITICAL: "yes"
@@ -571,7 +579,7 @@ curl -s "http://legacy-app:8080/?detail=true" | jq .
 - **Zero application changes** — no SDK integration required
 - **Language agnostic** — works with Java, .NET, PHP, Python, Node.js, or any other stack
 - **Same dependency view** — monitors exactly the same endpoints the application connects to
-- **Prometheus metrics** — sidecar exposes `app_dependency_health` and `app_dependency_latency_seconds`
+- **Prometheus metrics** — sidecar exposes `app_dependency_health`, `app_dependency_latency_seconds`, `app_dependency_status`, and `app_dependency_status_detail`
 
 ---
 
@@ -732,6 +740,7 @@ You have services spread across multiple Kubernetes clusters or data centers and
 
 ```bash
 DEPHEALTH_NAME=eu-front
+DEPHEALTH_GROUP=eu-cluster
 DEPHEALTH_DEPS="us-api:http,eu-db:postgres"
 DEPHEALTH_US_API_HOST=us-api.example.com    # external endpoint
 DEPHEALTH_US_API_PORT=443
@@ -745,6 +754,7 @@ DEPHEALTH_EU_DB_CRITICAL=yes
 
 ```bash
 DEPHEALTH_NAME=us-api
+DEPHEALTH_GROUP=us-cluster
 DEPHEALTH_DEPS="us-db:postgres"
 DEPHEALTH_US_DB_URL=postgres://us-db.svc:5432/app
 DEPHEALTH_US_DB_CRITICAL=yes
@@ -929,6 +939,7 @@ uniproxy ──[Authorization: Bearer xxx]──> secure-api (HTTP 200 OK)
 ```bash
 docker run -p 8080:8080 \
   -e DEPHEALTH_NAME=auth-monitor \
+  -e DEPHEALTH_GROUP=monitoring \
   -e DEPHEALTH_DEPS="secure-api:http,internal-svc:http" \
   -e DEPHEALTH_SECURE_API_URL="https://api.example.com/health" \
   -e DEPHEALTH_SECURE_API_CRITICAL=yes \
@@ -936,7 +947,7 @@ docker run -p 8080:8080 \
   -e DEPHEALTH_INTERNAL_SVC_URL="http://internal.svc:8080" \
   -e DEPHEALTH_INTERNAL_SVC_CRITICAL=yes \
   -e DEPHEALTH_INTERNAL_SVC_BEARER_TOKEN="internal-service-token" \
-  uniproxy:0.4.2
+  uniproxy:0.7.0
 ```
 
 ### Using Global Bearer Token
@@ -946,13 +957,14 @@ If all dependencies use the same token, set it once globally:
 ```bash
 docker run -p 8080:8080 \
   -e DEPHEALTH_NAME=auth-monitor \
+  -e DEPHEALTH_GROUP=monitoring \
   -e DEPHEALTH_BEARER_TOKEN="shared-token-for-all-deps" \
   -e DEPHEALTH_DEPS="api-1:http,api-2:http" \
   -e DEPHEALTH_API_1_URL="https://api-1.example.com" \
   -e DEPHEALTH_API_1_CRITICAL=yes \
   -e DEPHEALTH_API_2_URL="https://api-2.example.com" \
   -e DEPHEALTH_API_2_CRITICAL=yes \
-  uniproxy:0.4.2
+  uniproxy:0.7.0
 ```
 
 ---
@@ -1052,6 +1064,7 @@ Use the `HEADERS` option to send arbitrary HTTP headers with health checks.
 ```bash
 docker run -p 8080:8080 \
   -e DEPHEALTH_NAME=api-monitor \
+  -e DEPHEALTH_GROUP=monitoring \
   -e DEPHEALTH_DEPS="stripe:http,sendgrid:http,datadog:http" \
   -e DEPHEALTH_STRIPE_URL="https://api.stripe.com/v1" \
   -e DEPHEALTH_STRIPE_CRITICAL=yes \
@@ -1062,7 +1075,7 @@ docker run -p 8080:8080 \
   -e DEPHEALTH_DATADOG_URL="https://api.datadoghq.com/api/v1/validate" \
   -e DEPHEALTH_DATADOG_CRITICAL=no \
   -e DEPHEALTH_DATADOG_HEADERS='{"DD-API-KEY":"abc123","DD-APPLICATION-KEY":"def456"}' \
-  uniproxy:0.4.2
+  uniproxy:0.7.0
 ```
 
 ### gRPC Metadata
