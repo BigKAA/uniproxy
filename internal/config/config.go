@@ -1,4 +1,17 @@
-// Package config provides environment variable configuration parsing for uniproxy.
+// Package config provides environment variable and YAML configuration parsing for uniproxy.
+//
+// Configuration is loaded in a layered manner:
+//  1. Base config from an optional YAML file (CONFIG_FILE env var).
+//  2. Environment variable overrides (env vars always take priority over YAML).
+//  3. Defaults for any fields not set by either source.
+//  4. Validation of the final configuration.
+//
+// The package supports two main configuration domains:
+//   - Application config: name, group, check intervals, dependencies.
+//   - Server auth config: zone-based authentication for HTTP endpoints.
+//
+// Secret values support a _FILE suffix pattern (e.g., AUTH_PASS_FILE) for
+// reading secrets from files, which is useful in Kubernetes Secret volume mounts.
 package config
 
 import (
@@ -11,35 +24,41 @@ import (
 	"time"
 )
 
-// Config is the top-level application configuration.
+// Config is the top-level application configuration. It aggregates all settings
+// required to run uniproxy: application identity, logging, server auth,
+// health-check timing, and the list of dependencies to monitor.
 type Config struct {
-	Name          string
-	Group         string // logical group for metrics label
-	ListenAddr    string
-	Log           LogConfig
-	Auth          AuthConfig
-	CheckInterval time.Duration
+	Name          string        // application name for metrics labels and status responses
+	Group         string        // logical group for metrics label (e.g. "backend", "infra")
+	ListenAddr    string        // HTTP server listen address (default ":8080")
+	Log           LogConfig     // structured logging configuration
+	Auth          AuthConfig    // server-side (incoming) authentication for endpoints
+	CheckInterval time.Duration // how often the SDK checks each dependency (default 10s)
 	Timeout       time.Duration // global check timeout (0 = SDK default)
-	FetchTimeout  time.Duration // timeout for recursive HTTP fetch (default 5s)
+	FetchTimeout  time.Duration // timeout for recursive HTTP fetch in detail mode (default 5s)
 	IsEntry       bool          // when true, isentry=yes label is added to all dependency metrics
-	Dependencies  []Dependency
+	Dependencies  []Dependency  // list of dependencies to health-check
 }
 
-// AuthConfig describes server-side (incoming) authentication.
+// AuthConfig describes server-side (incoming) authentication for protected endpoints.
+// It uses a zone-based model where different HTTP endpoint groups ("status" for /,
+// "metrics" for /metrics) can have independent auth configurations.
+// Health probes (/healthz, /readyz) are always unauthenticated.
 type AuthConfig struct {
-	// Global defaults (applied to all protected zones).
+	// Global defaults applied to all protected zones unless overridden.
 	Method   string // "none" | "basic" | "bearer" | "apikey"
-	Username string
-	Password string
-	Token    string
-	APIKey   string
+	Username string // username for basic auth
+	Password string // password for basic auth
+	Token    string // token for bearer auth
+	APIKey   string // key for API key auth
 
-	// Per-zone overrides.
-	Status  *ZoneAuth // override for /
-	Metrics *ZoneAuth // override for /metrics
+	// Per-zone overrides. If non-nil, the zone's fields take priority over globals.
+	Status  *ZoneAuth // override for the status zone (GET /)
+	Metrics *ZoneAuth // override for the metrics zone (GET /metrics)
 }
 
-// ZoneAuth is a per-zone auth override.
+// ZoneAuth is a per-zone auth override. When set on AuthConfig.Status or
+// AuthConfig.Metrics, its non-empty fields override the corresponding global values.
 type ZoneAuth struct {
 	Method   string
 	Username string
@@ -48,9 +67,13 @@ type ZoneAuth struct {
 	APIKey   string
 }
 
-// ResolveZone returns the effective auth configuration for a zone.
-// Zone-specific values take priority, then global, then "none".
+// ResolveZone returns the effective auth configuration for a named zone.
+// Resolution order: zone-specific value > global value > "none" (default).
+//
+// Supported zone names: "status" (for GET /), "metrics" (for GET /metrics).
+// Unknown zone names return global defaults with "none" fallback.
 func (c *AuthConfig) ResolveZone(zone string) ZoneAuth {
+	// Look up the zone-specific override pointer.
 	var za *ZoneAuth
 	switch zone {
 	case "status":
@@ -59,6 +82,7 @@ func (c *AuthConfig) ResolveZone(zone string) ZoneAuth {
 		za = c.Metrics
 	}
 
+	// Start with global values as the base.
 	result := ZoneAuth{
 		Method:   c.Method,
 		Username: c.Username,
@@ -67,6 +91,7 @@ func (c *AuthConfig) ResolveZone(zone string) ZoneAuth {
 		APIKey:   c.APIKey,
 	}
 
+	// Override with zone-specific values where present.
 	if za != nil {
 		if za.Method != "" {
 			result.Method = za.Method
@@ -85,13 +110,16 @@ func (c *AuthConfig) ResolveZone(zone string) ZoneAuth {
 		}
 	}
 
+	// Ensure method is never empty — default to "none" (no auth required).
 	if result.Method == "" {
 		result.Method = "none"
 	}
 	return result
 }
 
-// LogConfig holds logging configuration parsed from environment variables.
+// LogConfig holds logging configuration parsed from LOG_* environment variables.
+// It controls output format, verbosity level, timestamp formatting, and
+// custom JSON key names for structured logging.
 type LogConfig struct {
 	Format     string // "text" (default) or "json"
 	Level      string // "debug", "info" (default), "warn", "error"
@@ -103,64 +131,74 @@ type LogConfig struct {
 	SourceKey  string // JSON key for source (empty = slog default "source")
 }
 
-// Dependency describes a single dependency to health-check.
+// Dependency describes a single dependency to health-check via the dephealth SDK.
+// Each dependency has a type (http, redis, postgres, etc.) that determines which
+// checker factory the SDK uses and which type-specific options are applicable.
 type Dependency struct {
-	Name       string
-	Type       string // http, redis, postgres, grpc, tcp, mysql, amqp, kafka, ldap
-	URL        string
-	Host       string
-	Port       string
-	Critical   bool
-	HealthPath string // HTTP-specific
+	Name       string // unique dependency name used as a metrics label
+	Type       string // checker type: http, redis, postgres, grpc, tcp, mysql, amqp, kafka, ldap
+	URL        string // connection URL (alternative to Host+Port)
+	Host       string // hostname or IP (used with Port when URL is empty)
+	Port       string // port number (used with Host when URL is empty)
+	Critical   bool   // if true, dependency failure affects readiness
+	HealthPath string // HTTP-specific: custom health endpoint path
 
-	// Per-dependency timing (0 = use global).
+	// Per-dependency timing overrides (0 = use global values).
 	CheckInterval time.Duration
 	Timeout       time.Duration
 
-	// TLS options (HTTP, gRPC).
-	TLS           *bool
-	TLSSkipVerify *bool
+	// TLS options for HTTP and gRPC types. nil means use checker defaults.
+	TLS           *bool // enable TLS
+	TLSSkipVerify *bool // skip TLS certificate verification
 
-	// gRPC-specific.
+	// gRPC-specific: target service name for gRPC health check protocol.
 	GRPCServiceName string
 
-	// PostgreSQL/MySQL-specific.
+	// Database-specific: custom health-check queries (default: SELECT 1).
 	PostgresQuery string
 	MySQLQuery    string
 
-	// Redis-specific.
+	// Redis-specific authentication and database selection.
 	RedisPassword string
-	RedisDB       *int
+	RedisDB       *int // nil means default database (0)
 
-	// AMQP-specific.
+	// AMQP-specific: full connection URL with credentials.
 	AMQPURL string
 
-	// LDAP-specific.
-	LDAPCheckMethod   string // "anonymous_bind", "simple_bind", "root_dse", "search"
-	LDAPBindDN        string // DN for simple_bind
-	LDAPBindPassword  string // password for simple_bind
-	LDAPBaseDN        string // base DN for search
-	LDAPSearchFilter  string // LDAP filter for search (default: (objectClass=*))
-	LDAPSearchScope   string // "base", "one", "sub" (default: base)
-	LDAPStartTLS      *bool  // StartTLS for ldap:// connections
-	LDAPTLSSkipVerify *bool  // skip TLS certificate verification
+	// LDAP-specific options for health check verification.
+	LDAPCheckMethod   string // check method: "anonymous_bind", "simple_bind", "root_dse", "search"
+	LDAPBindDN        string // distinguished name for simple_bind authentication
+	LDAPBindPassword  string // password for simple_bind authentication
+	LDAPBaseDN        string // base DN for LDAP search operations
+	LDAPSearchFilter  string // LDAP filter for search method (default: (objectClass=*))
+	LDAPSearchScope   string // search scope: "base", "one", "sub" (default: base)
+	LDAPStartTLS      *bool  // enable StartTLS upgrade for ldap:// connections
+	LDAPTLSSkipVerify *bool  // skip TLS certificate verification for LDAP
 
-	// Authentication (mutually exclusive: only one method per dependency).
-	BearerToken string
-	BasicUser   string
-	BasicPass   string
-	Headers     map[string]string // HTTP-only: custom headers
-	Metadata    map[string]string // gRPC-only: custom metadata
+	// Authentication for outgoing health check requests.
+	// Only one method per dependency is allowed (validated by validateAuth).
+	BearerToken string            // bearer token for HTTP/gRPC auth
+	BasicUser   string            // username for HTTP/gRPC basic auth
+	BasicPass   string            // password for HTTP/gRPC basic auth
+	Headers     map[string]string // HTTP-only: custom request headers
+	Metadata    map[string]string // gRPC-only: custom call metadata
 }
 
 // Load parses configuration from YAML file (optional) and environment variables.
 // Environment variables always take priority over YAML values.
 //
-// Flow: CONFIG_FILE → loadFromYAML → applyEnvOverrides → applyDefaults → validate.
+// Loading flow:
+//  1. If CONFIG_FILE env var is set, load base config from that YAML file.
+//  2. Apply environment variable overrides (DEPHEALTH_*, LOG_*, AUTH_*, LISTEN_ADDR).
+//  3. Fill in defaults for any fields still unset.
+//  4. Validate the final configuration for correctness and completeness.
+//
+// Returns an error if the YAML file is invalid, env vars have bad values,
+// required fields are missing, or auth config is inconsistent.
 func Load() (*Config, error) {
 	var cfg *Config
 
-	// Phase 1: Base config from YAML (if provided).
+	// Phase 1: Base config from YAML (if provided via CONFIG_FILE env var).
 	if path := os.Getenv("CONFIG_FILE"); path != "" {
 		var err error
 		cfg, err = loadFromYAML(path)
@@ -179,7 +217,7 @@ func Load() (*Config, error) {
 	// Phase 3: Apply defaults for unset fields.
 	applyDefaults(cfg)
 
-	// Phase 4: Validate.
+	// Phase 4: Validate the fully assembled config.
 	if err := validate(cfg); err != nil {
 		return nil, err
 	}
@@ -188,7 +226,16 @@ func Load() (*Config, error) {
 }
 
 // applyEnvOverrides reads environment variables and overwrites the corresponding
-// Config fields. Fields not set via env vars are left unchanged.
+// Config fields. Fields not set via env vars are left unchanged, preserving
+// any values loaded from the YAML config file.
+//
+// This function handles:
+//   - Core settings: LISTEN_ADDR, DEPHEALTH_NAME, DEPHEALTH_GROUP.
+//   - Timing: DEPHEALTH_CHECK_INTERVAL, DEPHEALTH_TIMEOUT, DEPHEALTH_FETCH_TIMEOUT (in seconds).
+//   - Global entry-point label: DEPHEALTH_ISENTRY.
+//   - Server-side auth: AUTH_METHOD, AUTH_USER, AUTH_PASS, AUTH_TOKEN, AUTH_API_KEY.
+//   - Dependencies: DEPHEALTH_DEPS (replaces all YAML deps if set).
+//   - Logging: LOG_FORMAT, LOG_LEVEL, LOG_TIME_FORMAT, etc.
 func applyEnvOverrides(cfg *Config) error {
 	// Listen address.
 	if v := os.Getenv("LISTEN_ADDR"); v != "" {
@@ -200,17 +247,17 @@ func applyEnvOverrides(cfg *Config) error {
 		return err
 	}
 
-	// Application name.
+	// Application name (required, but validated later).
 	if v := os.Getenv("DEPHEALTH_NAME"); v != "" {
 		cfg.Name = v
 	}
 
-	// Application group.
+	// Application group (required, but validated later).
 	if v := os.Getenv("DEPHEALTH_GROUP"); v != "" {
 		cfg.Group = v
 	}
 
-	// Check interval.
+	// Check interval: parsed as floating-point seconds (e.g. "10" = 10s, "0.5" = 500ms).
 	if v := os.Getenv("DEPHEALTH_CHECK_INTERVAL"); v != "" {
 		sec, err := strconv.ParseFloat(v, 64)
 		if err != nil {
@@ -219,7 +266,7 @@ func applyEnvOverrides(cfg *Config) error {
 		cfg.CheckInterval = time.Duration(sec * float64(time.Second))
 	}
 
-	// Global timeout (optional).
+	// Global timeout: optional; 0 means SDK uses its own default.
 	if v := os.Getenv("DEPHEALTH_TIMEOUT"); v != "" {
 		sec, err := strconv.ParseFloat(v, 64)
 		if err != nil {
@@ -228,7 +275,7 @@ func applyEnvOverrides(cfg *Config) error {
 		cfg.Timeout = time.Duration(sec * float64(time.Second))
 	}
 
-	// Fetch timeout.
+	// Fetch timeout for recursive HTTP detail requests.
 	if v := os.Getenv("DEPHEALTH_FETCH_TIMEOUT"); v != "" {
 		sec, err := strconv.ParseFloat(v, 64)
 		if err != nil {
@@ -237,7 +284,7 @@ func applyEnvOverrides(cfg *Config) error {
 		cfg.FetchTimeout = time.Duration(sec * float64(time.Second))
 	}
 
-	// IsEntry flag (optional global label).
+	// IsEntry flag: marks this application as an entry point in topology visualization.
 	if v := os.Getenv("DEPHEALTH_ISENTRY"); v != "" {
 		b, err := parseBool(v)
 		if err != nil {
@@ -246,18 +293,19 @@ func applyEnvOverrides(cfg *Config) error {
 		cfg.IsEntry = b
 	}
 
-	// Server-side (incoming) auth.
+	// Server-side (incoming) auth for status and metrics endpoints.
 	if err := loadServerAuth(cfg); err != nil {
 		return err
 	}
 
-	// Global auth defaults for dependencies.
+	// Global auth defaults that are inherited by all dependencies unless overridden.
 	ga, err := loadGlobalAuth()
 	if err != nil {
 		return err
 	}
 
-	// Dependencies: if DEPHEALTH_DEPS is set, it REPLACES any YAML deps entirely.
+	// Dependencies: DEPHEALTH_DEPS completely replaces any YAML-defined deps.
+	// If not set but YAML deps exist, only per-dep auth env var overlays are applied.
 	if depsStr := os.Getenv("DEPHEALTH_DEPS"); depsStr != "" {
 		deps, err := parseDeps(depsStr, ga)
 		if err != nil {
@@ -279,6 +327,13 @@ func applyEnvOverrides(cfg *Config) error {
 
 // applyLogEnvOverrides reads LOG_* environment variables and overwrites the
 // corresponding LogConfig fields. Fields not set via env vars are left unchanged.
+//
+// Recognized env vars:
+//   - LOG_FORMAT: output format ("text" or "json")
+//   - LOG_LEVEL: minimum log level ("debug", "info", "warn", "error")
+//   - LOG_TIME_FORMAT: timestamp format ("rfc3339", "rfc3339nano", "unix", "unixmilli")
+//   - LOG_ADD_SOURCE: include source file:line in output ("yes"/"no")
+//   - LOG_TIME_KEY, LOG_LEVEL_KEY, LOG_MESSAGE_KEY, LOG_SOURCE_KEY: custom JSON key names
 func applyLogEnvOverrides(lc *LogConfig) error {
 	if v := os.Getenv("LOG_FORMAT"); v != "" {
 		lc.Format = strings.ToLower(v)
@@ -296,6 +351,7 @@ func applyLogEnvOverrides(lc *LogConfig) error {
 		}
 		lc.AddSource = b
 	}
+	// Custom JSON key names (only affect JSON format output).
 	if v := os.Getenv("LOG_TIME_KEY"); v != "" {
 		lc.TimeKey = v
 	}
@@ -312,6 +368,7 @@ func applyLogEnvOverrides(lc *LogConfig) error {
 }
 
 // applyDefaults fills in default values for fields not set by YAML or env vars.
+// This is called after all overrides are applied, so it only fills truly unset fields.
 func applyDefaults(cfg *Config) {
 	if cfg.ListenAddr == "" {
 		cfg.ListenAddr = ":8080"
@@ -337,6 +394,8 @@ func applyDefaults(cfg *Config) {
 }
 
 // validate checks the Config for correctness after all loading and defaults.
+// It ensures required fields are present, log config values are valid,
+// server auth is consistent, and each dependency's auth is valid.
 func validate(cfg *Config) error {
 	if cfg.Name == "" {
 		return fmt.Errorf("DEPHEALTH_NAME is required")
@@ -354,12 +413,12 @@ func validate(cfg *Config) error {
 		return fmt.Errorf("DEPHEALTH_FETCH_TIMEOUT must be non-negative, got %v", cfg.FetchTimeout)
 	}
 
-	// Validate server-side auth.
+	// Validate server-side auth for both endpoint zones.
 	if err := validateServerAuth(&cfg.Auth); err != nil {
 		return err
 	}
 
-	// Validate dependency auth.
+	// Validate each dependency's auth config for consistency.
 	for i := range cfg.Dependencies {
 		if err := validateAuth(&cfg.Dependencies[i]); err != nil {
 			return err
@@ -369,7 +428,8 @@ func validate(cfg *Config) error {
 	return nil
 }
 
-// validateLogConfig checks that log configuration values are valid.
+// validateLogConfig checks that log configuration values are within the set of
+// supported options. Returns an error with clear guidance on valid values.
 func validateLogConfig(lc *LogConfig) error {
 	switch lc.Format {
 	case "text", "json":
@@ -377,6 +437,7 @@ func validateLogConfig(lc *LogConfig) error {
 		return fmt.Errorf("invalid LOG_FORMAT %q (expected text/json)", lc.Format)
 	}
 
+	// Use slog's own level parser to validate the level string.
 	var level slog.Level
 	if err := level.UnmarshalText([]byte(strings.ToUpper(lc.Level))); err != nil {
 		return fmt.Errorf("invalid LOG_LEVEL %q (expected debug/info/warn/error)", lc.Level)
@@ -392,19 +453,23 @@ func validateLogConfig(lc *LogConfig) error {
 }
 
 // globalAuth holds default authentication values parsed from global env vars.
+// These values serve as fallbacks for dependencies that don't define their own auth.
 type globalAuth struct {
 	BearerToken string
 	BasicUser   string
 	BasicPass   string
-	Headers     map[string]string
-	Metadata    map[string]string
+	Headers     map[string]string // HTTP-only custom headers
+	Metadata    map[string]string // gRPC-only custom metadata
 }
 
-// loadGlobalAuth parses global authentication env vars (DEPHEALTH_BEARER_TOKEN, etc.).
+// loadGlobalAuth parses global authentication env vars (DEPHEALTH_BEARER_TOKEN, etc.)
+// that serve as defaults for all dependencies. Per-dependency auth settings
+// override these values. Supports _FILE suffix for secret values.
 func loadGlobalAuth() (globalAuth, error) {
 	var ga globalAuth
 	var err error
 
+	// Bearer token supports _FILE suffix for reading from mounted secret files.
 	ga.BearerToken, err = resolveSecret("DEPHEALTH_BEARER_TOKEN")
 	if err != nil {
 		return ga, err
@@ -412,17 +477,20 @@ func loadGlobalAuth() (globalAuth, error) {
 
 	ga.BasicUser = os.Getenv("DEPHEALTH_BASIC_USER")
 
+	// Basic auth password supports _FILE suffix.
 	ga.BasicPass, err = resolveSecret("DEPHEALTH_BASIC_PASS")
 	if err != nil {
 		return ga, err
 	}
 
+	// Custom HTTP headers as JSON object: {"X-Custom": "value"}.
 	if v := os.Getenv("DEPHEALTH_HEADERS"); v != "" {
 		if err := json.Unmarshal([]byte(v), &ga.Headers); err != nil {
 			return ga, fmt.Errorf("invalid DEPHEALTH_HEADERS JSON: %w", err)
 		}
 	}
 
+	// Custom gRPC metadata as JSON object: {"x-custom": "value"}.
 	if v := os.Getenv("DEPHEALTH_METADATA"); v != "" {
 		if err := json.Unmarshal([]byte(v), &ga.Metadata); err != nil {
 			return ga, fmt.Errorf("invalid DEPHEALTH_METADATA JSON: %w", err)
@@ -432,9 +500,12 @@ func loadGlobalAuth() (globalAuth, error) {
 	return ga, nil
 }
 
-// loadServerAuth reads server-side auth from env vars and applies to cfg.Auth.
+// loadServerAuth reads server-side auth from env vars (AUTH_METHOD, AUTH_USER,
+// AUTH_PASS, AUTH_TOKEN, AUTH_API_KEY) and applies them to cfg.Auth.
+// Also loads per-zone overrides (AUTH_STATUS_*, AUTH_METRICS_*).
+// Secret values support _FILE suffix pattern.
 func loadServerAuth(cfg *Config) error {
-	// Global auth settings.
+	// Global auth settings for all protected endpoints.
 	if v := os.Getenv("AUTH_METHOD"); v != "" {
 		cfg.Auth.Method = v
 	}
@@ -442,6 +513,7 @@ func loadServerAuth(cfg *Config) error {
 		cfg.Auth.Username = v
 	}
 
+	// Password, token, and API key support _FILE suffix for Kubernetes secrets.
 	pass, err := resolveSecret("AUTH_PASS")
 	if err != nil {
 		return err
@@ -466,11 +538,10 @@ func loadServerAuth(cfg *Config) error {
 		cfg.Auth.APIKey = apiKey
 	}
 
-	// Per-zone: status.
+	// Per-zone auth overrides: allows different auth methods for status and metrics endpoints.
 	if err := loadZoneAuth("AUTH_STATUS", &cfg.Auth, "status"); err != nil {
 		return err
 	}
-	// Per-zone: metrics.
 	if err := loadZoneAuth("AUTH_METRICS", &cfg.Auth, "metrics"); err != nil {
 		return err
 	}
@@ -478,7 +549,10 @@ func loadServerAuth(cfg *Config) error {
 	return nil
 }
 
-// loadZoneAuth reads per-zone auth env vars and sets the zone override.
+// loadZoneAuth reads per-zone auth env vars (e.g. AUTH_STATUS_METHOD, AUTH_STATUS_USER)
+// and creates or merges the zone override in AuthConfig.
+// A zone override is only created if at least one env var for that zone is set.
+// When merging with existing YAML-loaded zone config, env vars take priority.
 func loadZoneAuth(prefix string, ac *AuthConfig, zone string) error {
 	method := os.Getenv(prefix + "_METHOD")
 	user := os.Getenv(prefix + "_USER")
@@ -511,7 +585,7 @@ func loadZoneAuth(prefix string, ac *AuthConfig, zone string) error {
 		APIKey:   apiKey,
 	}
 
-	// Resolve target zone pointer.
+	// Resolve target zone pointer in the AuthConfig.
 	var target **ZoneAuth
 	switch zone {
 	case "status":
@@ -521,9 +595,10 @@ func loadZoneAuth(prefix string, ac *AuthConfig, zone string) error {
 	}
 
 	if *target == nil {
+		// No existing zone config — use the new one directly.
 		*target = za
 	} else {
-		// Merge: env values override existing YAML values.
+		// Merge: env values override existing YAML values (non-empty fields win).
 		if za.Method != "" {
 			(*target).Method = za.Method
 		}
@@ -544,13 +619,19 @@ func loadZoneAuth(prefix string, ac *AuthConfig, zone string) error {
 	return nil
 }
 
-// resolveSecret resolves a secret value from env var or _FILE variant.
-// If both KEY and KEY_FILE are set, returns an error.
-// If KEY_FILE is set, reads the file and returns its trimmed content.
+// resolveSecret resolves a secret value from an environment variable or its _FILE variant.
+// This supports the common Kubernetes pattern where secrets are mounted as files.
+//
+// Rules:
+//   - If both KEY and KEY_FILE are set, returns an error (ambiguous).
+//   - If KEY_FILE is set, reads the file and returns its content (whitespace-trimmed).
+//   - If only KEY is set, returns its value directly.
+//   - If neither is set, returns an empty string.
 func resolveSecret(envKey string) (string, error) {
 	val := os.Getenv(envKey)
 	fileVal := os.Getenv(envKey + "_FILE")
 
+	// Ambiguous: both direct value and file path are set.
 	if val != "" && fileVal != "" {
 		return "", fmt.Errorf("both %s and %s_FILE are set; use only one", envKey, envKey)
 	}
@@ -562,7 +643,9 @@ func resolveSecret(envKey string) (string, error) {
 	return val, nil
 }
 
-// readSecretFile reads a secret from a file path, trimming whitespace.
+// readSecretFile reads a secret from a file path and trims leading/trailing whitespace.
+// The envKey parameter is used only for error messages to identify which env var
+// pointed to this file.
 func readSecretFile(path, envKey string) (string, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -571,8 +654,15 @@ func readSecretFile(path, envKey string) (string, error) {
 	return strings.TrimSpace(string(data)), nil
 }
 
-// validateAuth checks for conflicting auth methods on a dependency.
+// validateAuth checks for conflicting auth methods on a single dependency.
+// Only one auth method is allowed per dependency: bearer token, basic auth,
+// custom headers, or custom metadata.
+//
+// Also validates:
+//   - Incomplete basic auth (username without password or vice versa).
+//   - Type-appropriate auth: headers only for HTTP, metadata only for gRPC.
 func validateAuth(dep *Dependency) error {
+	// Count the number of auth methods configured.
 	methods := 0
 	if dep.BearerToken != "" {
 		methods++
@@ -591,7 +681,7 @@ func validateAuth(dep *Dependency) error {
 		return fmt.Errorf("dependency %q: conflicting auth methods; specify only one of bearer token, basic auth, headers, or metadata", dep.Name)
 	}
 
-	// Incomplete Basic Auth.
+	// Incomplete Basic Auth: both username and password must be set together.
 	if dep.BasicUser != "" && dep.BasicPass == "" {
 		return fmt.Errorf("dependency %q: BASIC_USER is set but BASIC_PASS is missing", dep.Name)
 	}
@@ -599,7 +689,7 @@ func validateAuth(dep *Dependency) error {
 		return fmt.Errorf("dependency %q: BASIC_PASS is set but BASIC_USER is missing", dep.Name)
 	}
 
-	// Type-appropriate check.
+	// Type-appropriate check: headers are HTTP-only, metadata is gRPC-only.
 	if len(dep.Headers) > 0 && dep.Type != "http" {
 		return fmt.Errorf("dependency %q: HEADERS is only valid for HTTP dependencies, got type %q", dep.Name, dep.Type)
 	}
@@ -610,13 +700,15 @@ func validateAuth(dep *Dependency) error {
 	return nil
 }
 
-// validateServerAuth validates the resolved auth config for both zones.
+// validateServerAuth validates the resolved auth config for both endpoint zones
+// ("status" and "metrics"). Ensures that the chosen auth method has all required
+// credentials (e.g. basic requires username+password, bearer requires token).
 func validateServerAuth(ac *AuthConfig) error {
 	for _, zone := range []string{"status", "metrics"} {
 		za := ac.ResolveZone(zone)
 		switch za.Method {
 		case "none":
-			// OK — no auth required.
+			// OK — no auth required for this zone.
 		case "basic":
 			if za.Username == "" || za.Password == "" {
 				return fmt.Errorf("auth %s: method=basic requires username and password", zone)
@@ -636,7 +728,11 @@ func validateServerAuth(ac *AuthConfig) error {
 	return nil
 }
 
-// parseDeps parses "name1:type1,name2:type2,..." into a slice of Dependency.
+// parseDeps parses the DEPHEALTH_DEPS string ("name1:type1,name2:type2,...") into
+// a slice of fully configured Dependency structs. For each dependency, it reads
+// per-dependency env vars (DEPHEALTH_<NAME>_URL, etc.) and applies global auth defaults.
+//
+// Supported types: http, redis, postgres, grpc, tcp, mysql, amqp, kafka, ldap.
 func parseDeps(s string, ga globalAuth) ([]Dependency, error) {
 	pairs := strings.Split(s, ",")
 	deps := make([]Dependency, 0, len(pairs))
@@ -646,6 +742,7 @@ func parseDeps(s string, ga globalAuth) ([]Dependency, error) {
 		if pair == "" {
 			continue
 		}
+		// Each pair must be "name:type".
 		parts := strings.SplitN(pair, ":", 2)
 		if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
 			return nil, fmt.Errorf("invalid dependency format %q, expected name:type", pair)
@@ -653,6 +750,7 @@ func parseDeps(s string, ga globalAuth) ([]Dependency, error) {
 		name := parts[0]
 		depType := parts[1]
 
+		// Validate dependency type against the supported set.
 		switch depType {
 		case "http", "redis", "postgres", "grpc", "tcp", "mysql", "amqp", "kafka", "ldap":
 		default:
@@ -669,7 +767,16 @@ func parseDeps(s string, ga globalAuth) ([]Dependency, error) {
 	return deps, nil
 }
 
-// parseSingleDep reads per-dependency env vars for a given dependency.
+// parseSingleDep reads per-dependency env vars for a given dependency name and type.
+// It constructs the env var prefix as "DEPHEALTH_<NAME>_" where NAME is the uppercased
+// dependency name with hyphens replaced by underscores (see EnvName).
+//
+// Required env vars per dependency:
+//   - DEPHEALTH_<NAME>_URL or DEPHEALTH_<NAME>_HOST + DEPHEALTH_<NAME>_PORT
+//   - DEPHEALTH_<NAME>_CRITICAL (yes/no)
+//
+// Optional env vars depend on the dependency type and include health paths,
+// TLS settings, authentication, and type-specific configuration.
 func parseSingleDep(name, depType string, ga globalAuth) (Dependency, error) {
 	prefix := "DEPHEALTH_" + EnvName(name) + "_"
 
@@ -678,7 +785,7 @@ func parseSingleDep(name, depType string, ga globalAuth) (Dependency, error) {
 		Type: depType,
 	}
 
-	// URL or Host+Port.
+	// Connection source: URL takes priority over Host+Port.
 	dep.URL = os.Getenv(prefix + "URL")
 	if dep.URL == "" {
 		dep.Host = os.Getenv(prefix + "HOST")
@@ -689,7 +796,7 @@ func parseSingleDep(name, depType string, ga globalAuth) (Dependency, error) {
 		}
 	}
 
-	// Critical flag.
+	// Critical flag: determines if this dependency affects application readiness.
 	critStr := os.Getenv(prefix + "CRITICAL")
 	switch strings.ToLower(critStr) {
 	case "yes", "true", "1":
@@ -703,7 +810,7 @@ func parseSingleDep(name, depType string, ga globalAuth) (Dependency, error) {
 			name, prefix, critStr)
 	}
 
-	// Per-dependency check interval.
+	// Per-dependency check interval override (in seconds).
 	if v := os.Getenv(prefix + "CHECK_INTERVAL"); v != "" {
 		s, err := strconv.ParseFloat(v, 64)
 		if err != nil {
@@ -712,7 +819,7 @@ func parseSingleDep(name, depType string, ga globalAuth) (Dependency, error) {
 		dep.CheckInterval = time.Duration(s * float64(time.Second))
 	}
 
-	// Per-dependency timeout.
+	// Per-dependency timeout override (in seconds).
 	if v := os.Getenv(prefix + "TIMEOUT"); v != "" {
 		s, err := strconv.ParseFloat(v, 64)
 		if err != nil {
@@ -721,7 +828,7 @@ func parseSingleDep(name, depType string, ga globalAuth) (Dependency, error) {
 		dep.Timeout = time.Duration(s * float64(time.Second))
 	}
 
-	// Type-specific options.
+	// Type-specific options: each dependency type has its own set of optional env vars.
 	switch depType {
 	case "http":
 		dep.HealthPath = os.Getenv(prefix + "HEALTH_PATH")
@@ -755,10 +862,12 @@ func parseSingleDep(name, depType string, ga globalAuth) (Dependency, error) {
 		dep.AMQPURL = os.Getenv(prefix + "AMQP_URL")
 
 	case "ldap":
+		// LDAP check method with default "root_dse" (simplest, no credentials needed).
 		dep.LDAPCheckMethod = os.Getenv(prefix + "LDAP_CHECK_METHOD")
 		if dep.LDAPCheckMethod == "" {
 			dep.LDAPCheckMethod = "root_dse"
 		}
+		// Validate against supported check methods.
 		switch dep.LDAPCheckMethod {
 		case "anonymous_bind", "simple_bind", "root_dse", "search":
 		default:
@@ -766,6 +875,7 @@ func parseSingleDep(name, depType string, ga globalAuth) (Dependency, error) {
 				name, prefix, dep.LDAPCheckMethod)
 		}
 
+		// Bind credentials for simple_bind method.
 		dep.LDAPBindDN = os.Getenv(prefix + "LDAP_BIND_DN")
 
 		var ldapErr error
@@ -774,6 +884,7 @@ func parseSingleDep(name, depType string, ga globalAuth) (Dependency, error) {
 			return dep, fmt.Errorf("dependency %q: %w", name, ldapErr)
 		}
 
+		// Search parameters for search check method.
 		dep.LDAPBaseDN = os.Getenv(prefix + "LDAP_BASE_DN")
 		dep.LDAPSearchFilter = os.Getenv(prefix + "LDAP_SEARCH_FILTER")
 
@@ -787,6 +898,7 @@ func parseSingleDep(name, depType string, ga globalAuth) (Dependency, error) {
 			}
 		}
 
+		// TLS options for LDAP connections.
 		if v := os.Getenv(prefix + "LDAP_START_TLS"); v != "" {
 			b, err := parseBool(v)
 			if err != nil {
@@ -803,11 +915,12 @@ func parseSingleDep(name, depType string, ga globalAuth) (Dependency, error) {
 		}
 	}
 
-	// Authentication: resolve per-dep values, fall back to global.
+	// Authentication: resolve per-dep values, fall back to global defaults.
 	if err := loadDepAuth(&dep, prefix, ga); err != nil {
 		return dep, err
 	}
 
+	// Validate auth consistency (no conflicting methods, complete basic auth, etc.).
 	if err := validateAuth(&dep); err != nil {
 		return dep, err
 	}
@@ -816,8 +929,15 @@ func parseSingleDep(name, depType string, ga globalAuth) (Dependency, error) {
 }
 
 // loadDepAuth parses auth env vars for a single dependency with global fallback.
+// Per-dependency auth settings always override global defaults.
+//
+// Resolution logic:
+//  1. Read per-dep values (DEPHEALTH_<NAME>_BEARER_TOKEN, BASIC_USER, BASIC_PASS).
+//  2. If per-dep value is set, use it; otherwise fall back to global default.
+//  3. If per-dep sets one auth method, clear any inherited values from a different method.
+//  4. Custom headers (HTTP) and metadata (gRPC) follow the same per-dep > global pattern.
 func loadDepAuth(dep *Dependency, prefix string, ga globalAuth) error {
-	// Bearer token.
+	// Bearer token: per-dep > global.
 	perDepToken, err := resolveSecret(prefix + "BEARER_TOKEN")
 	if err != nil {
 		return fmt.Errorf("dependency %q: %w", dep.Name, err)
@@ -828,7 +948,7 @@ func loadDepAuth(dep *Dependency, prefix string, ga globalAuth) error {
 		dep.BearerToken = ga.BearerToken
 	}
 
-	// Basic Auth username.
+	// Basic Auth username: per-dep > global.
 	perDepUser := os.Getenv(prefix + "BASIC_USER")
 	if perDepUser != "" {
 		dep.BasicUser = perDepUser
@@ -836,7 +956,7 @@ func loadDepAuth(dep *Dependency, prefix string, ga globalAuth) error {
 		dep.BasicUser = ga.BasicUser
 	}
 
-	// Basic Auth password.
+	// Basic Auth password: per-dep > global.
 	perDepPass, err := resolveSecret(prefix + "BASIC_PASS")
 	if err != nil {
 		return fmt.Errorf("dependency %q: %w", dep.Name, err)
@@ -847,15 +967,15 @@ func loadDepAuth(dep *Dependency, prefix string, ga globalAuth) error {
 		dep.BasicPass = ga.BasicPass
 	}
 
-	// If per-dep sets both bearer and basic — that's a conflict.
+	// Conflict check: per-dep cannot set both bearer and basic auth.
 	hasPerDepBearer := perDepToken != ""
 	hasPerDepBasic := perDepUser != "" || perDepPass != ""
 	if hasPerDepBearer && hasPerDepBasic {
 		return fmt.Errorf("dependency %q: both BEARER_TOKEN and BASIC_USER/BASIC_PASS are set; use only one auth method", dep.Name)
 	}
 
-	// Override logic: if any per-dep auth is set, clear inherited global values
-	// that belong to a different auth method.
+	// Clean up: if per-dep explicitly sets one method, clear inherited values from the other.
+	// This prevents conflicts when global sets bearer but per-dep sets basic (or vice versa).
 	if hasPerDepBearer {
 		dep.BasicUser = ""
 		dep.BasicPass = ""
@@ -863,36 +983,40 @@ func loadDepAuth(dep *Dependency, prefix string, ga globalAuth) error {
 		dep.BearerToken = ""
 	}
 
-	// Custom HTTP headers (per-dep overrides global entirely).
+	// Custom HTTP headers: per-dep JSON completely replaces global headers.
 	if v := os.Getenv(prefix + "HEADERS"); v != "" {
 		dep.Headers = make(map[string]string)
 		if err := json.Unmarshal([]byte(v), &dep.Headers); err != nil {
 			return fmt.Errorf("dependency %q: invalid %sHEADERS JSON: %w", dep.Name, prefix, err)
 		}
 	} else if dep.Type == "http" && len(ga.Headers) > 0 {
+		// Inherit global headers only for HTTP dependencies.
 		dep.Headers = ga.Headers
 	}
 
-	// Custom gRPC metadata (per-dep overrides global entirely).
+	// Custom gRPC metadata: per-dep JSON completely replaces global metadata.
 	if v := os.Getenv(prefix + "METADATA"); v != "" {
 		dep.Metadata = make(map[string]string)
 		if err := json.Unmarshal([]byte(v), &dep.Metadata); err != nil {
 			return fmt.Errorf("dependency %q: invalid %sMETADATA JSON: %w", dep.Name, prefix, err)
 		}
 	} else if dep.Type == "grpc" && len(ga.Metadata) > 0 {
+		// Inherit global metadata only for gRPC dependencies.
 		dep.Metadata = ga.Metadata
 	}
 
 	return nil
 }
 
-// EnvName converts a dependency name to environment variable format:
-// "uniproxy-02" → "UNIPROXY_02".
+// EnvName converts a dependency name to environment variable format by uppercasing
+// and replacing hyphens with underscores.
+// Example: "uniproxy-02" -> "UNIPROXY_02", "my-redis" -> "MY_REDIS".
 func EnvName(name string) string {
 	return strings.ToUpper(strings.ReplaceAll(name, "-", "_"))
 }
 
-// parseTLSOptions parses TLS and TLS_SKIP_VERIFY env vars for a dependency.
+// parseTLSOptions parses TLS and TLS_SKIP_VERIFY boolean env vars for HTTP and gRPC
+// dependencies. Uses pointer types (*bool) so nil indicates "not set" (use checker default).
 func parseTLSOptions(dep *Dependency, name, prefix string) error {
 	if v := os.Getenv(prefix + "TLS"); v != "" {
 		b, err := parseBool(v)
@@ -911,7 +1035,9 @@ func parseTLSOptions(dep *Dependency, name, prefix string) error {
 	return nil
 }
 
-// parseBool parses common boolean strings.
+// parseBool parses common boolean string representations.
+// Accepts: "yes"/"no", "true"/"false", "1"/"0" (case-insensitive).
+// Returns an error for any unrecognized value.
 func parseBool(s string) (bool, error) {
 	switch strings.ToLower(s) {
 	case "yes", "true", "1":

@@ -9,8 +9,13 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// yamlConfig is the intermediate YAML representation.
-// Duration fields use string to support both Go duration ("15s") and plain seconds ("15").
+// yamlConfig is the intermediate YAML representation of the application config.
+// It mirrors Config but uses string fields for durations to support both
+// Go duration format ("15s", "1m30s") and plain seconds ("15").
+// This allows users to write more natural YAML like:
+//
+//	checkInterval: "15"    # 15 seconds
+//	timeout: "5s"          # Go duration format
 type yamlConfig struct {
 	Name          string         `yaml:"name"`
 	Group         string         `yaml:"group"`
@@ -20,11 +25,12 @@ type yamlConfig struct {
 	CheckInterval string         `yaml:"checkInterval"`
 	Timeout       string         `yaml:"timeout"`
 	FetchTimeout  string         `yaml:"fetchTimeout"`
-	IsEntry       *bool          `yaml:"isEntry"`
+	IsEntry       *bool          `yaml:"isEntry"` // pointer to distinguish unset from false
 	Dependencies  []yamlDep      `yaml:"dependencies"`
 }
 
 // yamlLogConfig mirrors LogConfig with YAML tags.
+// Uses *bool for AddSource to distinguish "not set in YAML" (nil) from "set to false".
 type yamlLogConfig struct {
 	Format     string `yaml:"format"`
 	Level      string `yaml:"level"`
@@ -36,7 +42,8 @@ type yamlLogConfig struct {
 	SourceKey  string `yaml:"sourceKey"`
 }
 
-// yamlAuthConfig describes server-side (incoming) authentication in YAML.
+// yamlAuthConfig describes server-side (incoming) authentication in YAML format.
+// Supports global auth settings and per-zone overrides for status and metrics endpoints.
 type yamlAuthConfig struct {
 	Method   string        `yaml:"method"`
 	Username string        `yaml:"username"`
@@ -47,7 +54,7 @@ type yamlAuthConfig struct {
 	Metrics  *yamlZoneAuth `yaml:"metrics"`
 }
 
-// yamlZoneAuth is a per-zone auth override in YAML.
+// yamlZoneAuth is a per-zone auth override in YAML format.
 type yamlZoneAuth struct {
 	Method   string `yaml:"method"`
 	Username string `yaml:"username"`
@@ -56,7 +63,9 @@ type yamlZoneAuth struct {
 	APIKey   string `yaml:"apiKey"`
 }
 
-// yamlDep describes a single dependency in YAML.
+// yamlDep describes a single dependency in YAML format.
+// Duration fields (CheckInterval, Timeout) use strings for flexible parsing.
+// Auth is nested under an optional "auth" key.
 type yamlDep struct {
 	Name            string       `yaml:"name"`
 	Type            string       `yaml:"type"`
@@ -77,7 +86,7 @@ type yamlDep struct {
 	AMQPURL         string       `yaml:"amqpUrl"`
 	Auth            *yamlDepAuth `yaml:"auth"`
 
-	// LDAP-specific.
+	// LDAP-specific options.
 	LDAPCheckMethod   string `yaml:"ldapCheckMethod"`
 	LDAPBindDN        string `yaml:"ldapBindDN"`
 	LDAPBindPassword  string `yaml:"ldapBindPassword"`
@@ -88,7 +97,8 @@ type yamlDep struct {
 	LDAPTLSSkipVerify *bool  `yaml:"ldapTLSSkipVerify"`
 }
 
-// yamlDepAuth holds per-dependency authentication in YAML.
+// yamlDepAuth holds per-dependency authentication settings in YAML format.
+// Supports bearer token, basic auth, custom HTTP headers, and gRPC metadata.
 type yamlDepAuth struct {
 	BearerToken string            `yaml:"bearerToken"`
 	BasicUser   string            `yaml:"basicUser"`
@@ -97,7 +107,8 @@ type yamlDepAuth struct {
 	Metadata    map[string]string `yaml:"metadata"`
 }
 
-// loadFromYAML reads a YAML configuration file and converts it to Config.
+// loadFromYAML reads a YAML configuration file at the given path and converts
+// it to the application Config struct. This is called when CONFIG_FILE env var is set.
 func loadFromYAML(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -113,6 +124,8 @@ func loadFromYAML(path string) (*Config, error) {
 }
 
 // convertYAMLToConfig converts the intermediate yamlConfig to the application Config.
+// It handles type conversions (string durations to time.Duration, *bool to bool)
+// and delegates to specialized converters for sub-structures (auth, dependencies).
 func convertYAMLToConfig(yc *yamlConfig) (*Config, error) {
 	cfg := &Config{
 		Name:       yc.Name,
@@ -120,7 +133,7 @@ func convertYAMLToConfig(yc *yamlConfig) (*Config, error) {
 		ListenAddr: yc.ListenAddr,
 	}
 
-	// Log config.
+	// Log config: direct field copy with *bool -> bool conversion.
 	cfg.Log = LogConfig{
 		Format:     yc.Log.Format,
 		Level:      yc.Log.Level,
@@ -134,7 +147,7 @@ func convertYAMLToConfig(yc *yamlConfig) (*Config, error) {
 		cfg.Log.AddSource = *yc.Log.AddSource
 	}
 
-	// Durations.
+	// Parse string durations to time.Duration using flexible format.
 	var err error
 	cfg.CheckInterval, err = parseDurationFlexible(yc.CheckInterval)
 	if err != nil {
@@ -151,15 +164,15 @@ func convertYAMLToConfig(yc *yamlConfig) (*Config, error) {
 		return nil, fmt.Errorf("fetchTimeout: %w", err)
 	}
 
-	// IsEntry flag.
+	// IsEntry flag: nil means "not set in YAML" -> defaults to false.
 	if yc.IsEntry != nil {
 		cfg.IsEntry = *yc.IsEntry
 	}
 
-	// Server auth.
+	// Server auth config.
 	cfg.Auth = convertYAMLAuth(&yc.Auth)
 
-	// Dependencies.
+	// Convert each YAML dependency to the application Dependency struct.
 	for i, yd := range yc.Dependencies {
 		dep, err := convertYAMLDep(&yd)
 		if err != nil {
@@ -171,7 +184,8 @@ func convertYAMLToConfig(yc *yamlConfig) (*Config, error) {
 	return cfg, nil
 }
 
-// convertYAMLDep converts a single yamlDep to Dependency.
+// convertYAMLDep converts a single yamlDep to the application Dependency struct.
+// Handles duration parsing for per-dependency timing and auth field extraction.
 func convertYAMLDep(yd *yamlDep) (Dependency, error) {
 	dep := Dependency{
 		Name:              yd.Name,
@@ -199,6 +213,7 @@ func convertYAMLDep(yd *yamlDep) (Dependency, error) {
 		LDAPTLSSkipVerify: yd.LDAPTLSSkipVerify,
 	}
 
+	// Parse per-dependency duration overrides.
 	var err error
 	dep.CheckInterval, err = parseDurationFlexible(yd.CheckInterval)
 	if err != nil {
@@ -210,7 +225,7 @@ func convertYAMLDep(yd *yamlDep) (Dependency, error) {
 		return dep, fmt.Errorf("timeout: %w", err)
 	}
 
-	// Dependency auth.
+	// Flatten nested auth struct into top-level Dependency fields.
 	if yd.Auth != nil {
 		dep.BearerToken = yd.Auth.BearerToken
 		dep.BasicUser = yd.Auth.BasicUser
@@ -222,7 +237,8 @@ func convertYAMLDep(yd *yamlDep) (Dependency, error) {
 	return dep, nil
 }
 
-// convertYAMLAuth converts yamlAuthConfig to AuthConfig.
+// convertYAMLAuth converts yamlAuthConfig to the application AuthConfig struct,
+// including per-zone overrides for status and metrics endpoints.
 func convertYAMLAuth(ya *yamlAuthConfig) AuthConfig {
 	ac := AuthConfig{
 		Method:   ya.Method,
@@ -232,6 +248,7 @@ func convertYAMLAuth(ya *yamlAuthConfig) AuthConfig {
 		APIKey:   ya.APIKey,
 	}
 
+	// Convert per-zone overrides (nil-safe).
 	if ya.Status != nil {
 		ac.Status = &ZoneAuth{
 			Method:   ya.Status.Method,
@@ -255,18 +272,22 @@ func convertYAMLAuth(ya *yamlAuthConfig) AuthConfig {
 	return ac
 }
 
-// parseDurationFlexible parses a duration from string.
-// Accepts Go duration strings ("15s", "1m30s") and plain numbers (as seconds).
+// parseDurationFlexible parses a duration from a string value.
+// It accepts two formats:
+//   - Go duration strings: "15s", "1m30s", "500ms" (parsed by time.ParseDuration).
+//   - Plain numbers: interpreted as seconds ("15" -> 15s, "0.5" -> 500ms).
+//
+// Empty string returns zero duration (no error).
 func parseDurationFlexible(s string) (time.Duration, error) {
 	if s == "" {
 		return 0, nil
 	}
-	// Try Go duration format first.
+	// Try Go duration format first (e.g. "15s", "1m30s").
 	d, err := time.ParseDuration(s)
 	if err == nil {
 		return d, nil
 	}
-	// Fallback: plain number as seconds.
+	// Fallback: interpret as plain number of seconds.
 	sec, err := strconv.ParseFloat(s, 64)
 	if err != nil {
 		return 0, fmt.Errorf("invalid duration %q: expected Go duration (15s) or seconds (15)", s)
