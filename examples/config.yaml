@@ -17,6 +17,10 @@ group: my-group
 # HTTP server listen address.
 listenAddr: ":8080"
 
+# Mark this application as an entry point in topology visualization.
+# Adds isentry=yes label to all dependency metrics.
+# isEntry: true
+
 # Health check interval. Supports Go duration ("15s", "1m30s") or seconds ("15").
 checkInterval: "15s"
 
