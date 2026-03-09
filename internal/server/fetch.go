@@ -10,6 +10,21 @@ import (
 	"time"
 )
 
+// maxResponseSize limits the body size read from downstream HTTP dependencies
+// to prevent memory exhaustion from malicious or unexpectedly large responses.
+const maxResponseSize = 1 << 20 // 1 MiB
+
+// fetchClient is a dedicated HTTP client for downstream fetches with
+// transport-level settings independent of http.DefaultClient.
+var fetchClient = &http.Client{
+	// Per-request timeouts are applied via context; this is a safety net.
+	Timeout: 30 * time.Second,
+	// Do not follow redirects — we only want the direct response.
+	CheckRedirect: func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	},
+}
+
 // fetchHTTPResponse makes an HTTP GET request to an HTTP dependency's detail endpoint
 // to fetch its status response for recursive chain visualization.
 //
@@ -24,6 +39,7 @@ import (
 //   - Request creation failure
 //   - Network errors (timeout, connection refused, DNS failure)
 //   - Non-200 HTTP status codes
+//   - Response body exceeds maxResponseSize (1 MiB)
 //   - Invalid JSON response body
 //
 // All errors are logged at debug level to avoid log noise from expected failures
@@ -47,8 +63,8 @@ func fetchHTTPResponse(ctx context.Context, host, port string, depth int, timeou
 		return nil
 	}
 
-	// Execute the HTTP request using the default client.
-	resp, err := http.DefaultClient.Do(req)
+	// Execute the HTTP request using the dedicated fetch client.
+	resp, err := fetchClient.Do(req)
 	if err != nil {
 		slog.Debug("fetch: request failed", "url", url, "error", err)
 		return nil
@@ -61,7 +77,7 @@ func fetchHTTPResponse(ctx context.Context, host, port string, depth int, timeou
 		return nil
 	}
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
 	if err != nil {
 		slog.Debug("fetch: read body", "url", url, "error", err)
 		return nil

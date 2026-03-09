@@ -99,17 +99,21 @@ func main() {
 
 	// Start the HTTP server in a separate goroutine so the main goroutine
 	// can block on the context cancellation signal.
+	serverErr := make(chan error, 1)
 	go func() {
 		slog.Info("server starting", "addr", cfg.ListenAddr)
 		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			slog.Error("server error", "error", err)
-			os.Exit(1)
+			serverErr <- err
 		}
 	}()
 
-	// Block until SIGINT/SIGTERM is received.
-	<-ctx.Done()
-	slog.Info("shutting down")
+	// Block until SIGINT/SIGTERM is received or server fails to start.
+	select {
+	case <-ctx.Done():
+		slog.Info("shutting down")
+	case err := <-serverErr:
+		slog.Error("server error", "error", err)
+	}
 
 	// Graceful shutdown: stop health checks first, then close the HTTP server.
 	dh.Stop()
