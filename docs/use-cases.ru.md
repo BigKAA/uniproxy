@@ -516,7 +516,7 @@ spec:
         - containerPort: 80
 
     - name: health-sidecar
-      image: uniproxy:0.7.0
+      image: uniproxy:0.7.1
       ports:
         - containerPort: 8080
       env:
@@ -947,7 +947,7 @@ docker run -p 8080:8080 \
   -e DEPHEALTH_INTERNAL_SVC_URL="http://internal.svc:8080" \
   -e DEPHEALTH_INTERNAL_SVC_CRITICAL=yes \
   -e DEPHEALTH_INTERNAL_SVC_BEARER_TOKEN="internal-service-token" \
-  uniproxy:0.7.0
+  uniproxy:0.7.1
 ```
 
 ### Глобальный Bearer Token
@@ -964,7 +964,7 @@ docker run -p 8080:8080 \
   -e DEPHEALTH_API_1_CRITICAL=yes \
   -e DEPHEALTH_API_2_URL="https://api-2.example.com" \
   -e DEPHEALTH_API_2_CRITICAL=yes \
-  uniproxy:0.7.0
+  uniproxy:0.7.1
 ```
 
 ---
@@ -1075,7 +1075,7 @@ docker run -p 8080:8080 \
   -e DEPHEALTH_DATADOG_URL="https://api.datadoghq.com/api/v1/validate" \
   -e DEPHEALTH_DATADOG_CRITICAL=no \
   -e DEPHEALTH_DATADOG_HEADERS='{"DD-API-KEY":"abc123","DD-APPLICATION-KEY":"def456"}' \
-  uniproxy:0.7.0
+  uniproxy:0.7.1
 ```
 
 ### gRPC Metadata
