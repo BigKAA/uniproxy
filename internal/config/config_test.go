@@ -2550,12 +2550,12 @@ func TestLoad_LDAP_AnonymousBind(t *testing.T) {
 
 func TestLoad_HTTPHostHeader(t *testing.T) {
 	setEnvs(t, map[string]string{
-		"DEPHEALTH_NAME":             "app",
-		"DEPHEALTH_GROUP":            "test",
-		"DEPHEALTH_DEPS":             "web:http",
-		"DEPHEALTH_WEB_URL":          "http://10.0.0.1:80",
-		"DEPHEALTH_WEB_CRITICAL":     "yes",
-		"DEPHEALTH_WEB_HOST_HEADER":  "myapp.example.com",
+		"DEPHEALTH_NAME":            "app",
+		"DEPHEALTH_GROUP":           "test",
+		"DEPHEALTH_DEPS":            "web:http",
+		"DEPHEALTH_WEB_URL":         "http://10.0.0.1:80",
+		"DEPHEALTH_WEB_CRITICAL":    "yes",
+		"DEPHEALTH_WEB_HOST_HEADER": "myapp.example.com",
 	})
 
 	cfg, err := Load()
@@ -2570,13 +2570,13 @@ func TestLoad_HTTPHostHeader(t *testing.T) {
 
 func TestLoad_GRPCAuthority(t *testing.T) {
 	setEnvs(t, map[string]string{
-		"DEPHEALTH_NAME":                "app",
-		"DEPHEALTH_GROUP":               "test",
-		"DEPHEALTH_DEPS":                "svc:grpc",
-		"DEPHEALTH_SVC_HOST":            "10.0.0.2",
-		"DEPHEALTH_SVC_PORT":            "443",
-		"DEPHEALTH_SVC_CRITICAL":        "yes",
-		"DEPHEALTH_SVC_GRPC_AUTHORITY":  "myservice.example.com",
+		"DEPHEALTH_NAME":               "app",
+		"DEPHEALTH_GROUP":              "test",
+		"DEPHEALTH_DEPS":               "svc:grpc",
+		"DEPHEALTH_SVC_HOST":           "10.0.0.2",
+		"DEPHEALTH_SVC_PORT":           "443",
+		"DEPHEALTH_SVC_CRITICAL":       "yes",
+		"DEPHEALTH_SVC_GRPC_AUTHORITY": "myservice.example.com",
 	})
 
 	cfg, err := Load()

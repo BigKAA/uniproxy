@@ -100,6 +100,19 @@ dependencies:
       basicUser: "service"
       basicPass: "password"
 
+  # HTTP dependency behind ingress/gateway — custom Host header.
+  # When health-checking a service by IP address behind an ingress controller
+  # or reverse proxy, the Host header must match the virtual host routing rule.
+  # With TLS, hostHeader also sets the SNI (ServerName).
+  - name: ingress-app
+    type: http
+    host: "192.168.1.100"
+    port: "443"
+    critical: true
+    tls: true
+    tlsSkipVerify: true
+    hostHeader: "app.example.com"
+
   # gRPC dependency.
   - name: grpc-service
     type: grpc
@@ -110,6 +123,18 @@ dependencies:
     auth:
       metadata:
         x-api-key: "grpc-key"
+
+  # gRPC dependency behind reverse proxy — custom :authority.
+  # When a gRPC service is behind envoy or nginx gRPC proxy, the :authority
+  # pseudo-header must match the routing rule. With TLS, also sets SNI.
+  - name: grpc-proxy
+    type: grpc
+    host: "10.0.0.50"
+    port: "8443"
+    critical: false
+    tls: true
+    tlsSkipVerify: true
+    grpcAuthority: "grpc.example.com"
 
   # Redis dependency.
   - name: cache

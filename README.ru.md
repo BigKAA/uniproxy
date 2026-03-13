@@ -1,7 +1,7 @@
 # uniproxy
 
 [![Go Version](https://img.shields.io/badge/go-1.25-00ADD8.svg)](https://golang.org/)
-[![dephealth SDK](https://img.shields.io/badge/dephealth_SDK-v0.8.0-blue.svg)](https://github.com/BigKAA/topologymetrics)
+[![dephealth SDK](https://img.shields.io/badge/dephealth_SDK-v0.8.2-blue.svg)](https://github.com/BigKAA/topologymetrics)
 [![License](https://img.shields.io/badge/license-Apache%202.0-green.svg)](./LICENSE)
 
 **Универсальный тестовый прокси для мониторинга здоровья зависимостей с dephealth SDK**
@@ -185,7 +185,9 @@ dependencies:
 | `DEPHEALTH_<ИМЯ>_HEALTH_PATH` | Нет | Путь для HTTP health check |
 | `DEPHEALTH_<ИМЯ>_TLS` | Нет | Включить TLS (`yes`/`no`, HTTP/gRPC) |
 | `DEPHEALTH_<ИМЯ>_TLS_SKIP_VERIFY` | Нет | Пропустить проверку TLS (`yes`/`no`) |
+| `DEPHEALTH_<ИМЯ>_HOST_HEADER` | Нет | Пользовательский HTTP Host header (также устанавливает TLS SNI). Для сервисов за ingress/proxy |
 | `DEPHEALTH_<ИМЯ>_GRPC_SERVICE_NAME` | Нет | Имя gRPC-сервиса для health check |
+| `DEPHEALTH_<ИМЯ>_GRPC_AUTHORITY` | Нет | Пользовательский gRPC pseudo-header `:authority` (также устанавливает TLS SNI). Для gRPC за proxy |
 | `DEPHEALTH_<ИМЯ>_POSTGRES_QUERY` | Нет | Пользовательский запрос PostgreSQL |
 | `DEPHEALTH_<ИМЯ>_MYSQL_QUERY` | Нет | Пользовательский запрос MySQL |
 | `DEPHEALTH_<ИМЯ>_REDIS_PASSWORD` | Нет | Пароль Redis |
@@ -370,6 +372,55 @@ docker run -p 8080:8080 \
   -e DEPHEALTH_CORP_LDAP_LDAP_START_TLS=yes \
   uniproxy:latest
 ```
+
+### Пользовательский Host Header (маршрутизация через Ingress/Proxy)
+
+При проверке здоровья сервиса, находящегося за ingress-контроллером или reverse proxy, по IP-адресу необходимо установить правильный заголовок `Host` для маршрутизации виртуального хоста. Для gRPC-сервисов за прокси используется pseudo-header `:authority`. При TLS эти опции также устанавливают SNI (ServerName).
+
+**Переменные окружения:**
+
+```bash
+docker run -p 8080:8080 \
+  -e DEPHEALTH_NAME=proxy-check \
+  -e DEPHEALTH_GROUP=my-group \
+  -e DEPHEALTH_DEPS="web-app:http,grpc-api:grpc" \
+  -e DEPHEALTH_WEB_APP_HOST="192.168.1.100" \
+  -e DEPHEALTH_WEB_APP_PORT=443 \
+  -e DEPHEALTH_WEB_APP_CRITICAL=yes \
+  -e DEPHEALTH_WEB_APP_TLS=yes \
+  -e DEPHEALTH_WEB_APP_TLS_SKIP_VERIFY=yes \
+  -e DEPHEALTH_WEB_APP_HOST_HEADER="app.example.com" \
+  -e DEPHEALTH_GRPC_API_HOST="10.0.0.50" \
+  -e DEPHEALTH_GRPC_API_PORT=8443 \
+  -e DEPHEALTH_GRPC_API_CRITICAL=yes \
+  -e DEPHEALTH_GRPC_API_TLS=yes \
+  -e DEPHEALTH_GRPC_API_GRPC_AUTHORITY="grpc.example.com" \
+  uniproxy:latest
+```
+
+**YAML-конфигурация:**
+
+```yaml
+dependencies:
+  - name: web-app
+    type: http
+    host: "192.168.1.100"
+    port: "443"
+    critical: true
+    tls: true
+    tlsSkipVerify: true
+    hostHeader: "app.example.com"
+  - name: grpc-api
+    type: grpc
+    host: "10.0.0.50"
+    port: "8443"
+    critical: true
+    tls: true
+    tlsSkipVerify: true
+    grpcAuthority: "grpc.example.com"
+```
+
+> **Примечание:** `hostHeader` конфликтует с ключом `Host` в пользовательских заголовках, а `grpcAuthority` — с `:authority` в gRPC metadata. SDK вернёт ошибку при одновременной установке обоих.
 
 ### Пример конфигурации
 

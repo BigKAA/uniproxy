@@ -206,7 +206,7 @@ make help
 - Parses environment variables and optional YAML config (`CONFIG_FILE`) into `Config` struct
 - Required vars: `DEPHEALTH_NAME`, `DEPHEALTH_GROUP`
 - Optional: `LISTEN_ADDR`, `LOG_FORMAT`, `LOG_LEVEL`, `LOG_TIME_FORMAT`, `LOG_ADD_SOURCE`, `LOG_*_KEY`, `DEPHEALTH_CHECK_INTERVAL`, `DEPHEALTH_TIMEOUT`, `DEPHEALTH_FETCH_TIMEOUT`, `DEPHEALTH_ISENTRY`
-- Per-dependency vars: `DEPHEALTH_<NAME>_URL` or `DEPHEALTH_<NAME>_HOST` + `DEPHEALTH_<NAME>_PORT`
+- Per-dependency vars: `DEPHEALTH_<NAME>_URL` or `DEPHEALTH_<NAME>_HOST` + `DEPHEALTH_<NAME>_PORT`, `DEPHEALTH_<NAME>_HOST_HEADER` (HTTP), `DEPHEALTH_<NAME>_GRPC_AUTHORITY` (gRPC)
 - Server auth: `AUTH_METHOD`, `AUTH_USER`, `AUTH_PASS`, `AUTH_TOKEN`, `AUTH_API_KEY` + per-zone overrides (`AUTH_STATUS_*`, `AUTH_METRICS_*`)
 - Dependency auth: `DEPHEALTH_BEARER_TOKEN`, `DEPHEALTH_BASIC_USER/PASS`, `DEPHEALTH_HEADERS`, `DEPHEALTH_METADATA` (global and per-dependency)
 - `_FILE` suffix pattern for secrets (e.g., `DEPHEALTH_BEARER_TOKEN_FILE`)
@@ -222,7 +222,7 @@ make help
   - `GET /metrics` — Prometheus metrics via `promhttp.Handler()`. Auth zone: `metrics`
 
 **External Dependency: dephealth SDK**
-- `github.com/BigKAA/topologymetrics/sdk-go/dephealth` v0.8.0
+- `github.com/BigKAA/topologymetrics/sdk-go/dephealth` v0.8.2
 - Handles all health checking logic (HTTP, gRPC, database connections, etc.)
 - Exports 4 Prometheus metrics:
   - `app_dependency_health` (gauge: 1=healthy, 0=unhealthy)
