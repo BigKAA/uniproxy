@@ -201,6 +201,9 @@ func buildDependencyOption(dep config.Dependency, isEntry bool) (dephealth.Optio
 		if dep.TLSSkipVerify != nil {
 			depOpts = append(depOpts, dephealth.WithHTTPTLSSkipVerify(*dep.TLSSkipVerify))
 		}
+		if dep.HostHeader != "" {
+			depOpts = append(depOpts, dephealth.WithHTTPHostHeader(dep.HostHeader))
+		}
 		// HTTP authentication options.
 		if dep.BearerToken != "" {
 			depOpts = append(depOpts, dephealth.WithHTTPBearerToken(dep.BearerToken))
@@ -220,6 +223,9 @@ func buildDependencyOption(dep config.Dependency, isEntry bool) (dephealth.Optio
 		}
 		if dep.TLSSkipVerify != nil {
 			depOpts = append(depOpts, dephealth.WithGRPCTLSSkipVerify(*dep.TLSSkipVerify))
+		}
+		if dep.GRPCAuthority != "" {
+			depOpts = append(depOpts, dephealth.WithGRPCAuthority(dep.GRPCAuthority))
 		}
 		// gRPC authentication options.
 		if dep.BearerToken != "" {

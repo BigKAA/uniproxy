@@ -600,3 +600,80 @@ dependencies:
 		t.Error("LDAPTLSSkipVerify should be nil when not set")
 	}
 }
+
+// --- HostHeader / GRPCAuthority YAML tests ---
+
+func TestLoadFromYAML_HostHeader(t *testing.T) {
+	yamlContent := `
+name: test-app
+group: test
+dependencies:
+  - name: web
+    type: http
+    url: "http://10.0.0.1:80"
+    critical: true
+    hostHeader: "myapp.example.com"
+`
+	path := writeTestYAML(t, yamlContent)
+	cfg, err := loadFromYAML(path)
+	if err != nil {
+		t.Fatalf("loadFromYAML() error: %v", err)
+	}
+	if len(cfg.Dependencies) != 1 {
+		t.Fatalf("len(Dependencies) = %d, want 1", len(cfg.Dependencies))
+	}
+	dep := cfg.Dependencies[0]
+	if dep.HostHeader != "myapp.example.com" {
+		t.Errorf("HostHeader = %q, want %q", dep.HostHeader, "myapp.example.com")
+	}
+}
+
+func TestLoadFromYAML_GRPCAuthority(t *testing.T) {
+	yamlContent := `
+name: test-app
+group: test
+dependencies:
+  - name: svc
+    type: grpc
+    host: "10.0.0.2"
+    port: "443"
+    critical: true
+    grpcAuthority: "myservice.example.com"
+`
+	path := writeTestYAML(t, yamlContent)
+	cfg, err := loadFromYAML(path)
+	if err != nil {
+		t.Fatalf("loadFromYAML() error: %v", err)
+	}
+	if len(cfg.Dependencies) != 1 {
+		t.Fatalf("len(Dependencies) = %d, want 1", len(cfg.Dependencies))
+	}
+	dep := cfg.Dependencies[0]
+	if dep.GRPCAuthority != "myservice.example.com" {
+		t.Errorf("GRPCAuthority = %q, want %q", dep.GRPCAuthority, "myservice.example.com")
+	}
+}
+
+func TestLoadFromYAML_HostHeaderNotSet(t *testing.T) {
+	yamlContent := `
+name: test-app
+group: test
+dependencies:
+  - name: web
+    type: http
+    url: "http://web.svc:8080"
+    critical: true
+`
+	path := writeTestYAML(t, yamlContent)
+	cfg, err := loadFromYAML(path)
+	if err != nil {
+		t.Fatalf("loadFromYAML() error: %v", err)
+	}
+	dep := cfg.Dependencies[0]
+	if dep.HostHeader != "" {
+		t.Errorf("HostHeader = %q, want empty", dep.HostHeader)
+	}
+	if dep.GRPCAuthority != "" {
+		t.Errorf("GRPCAuthority = %q, want empty", dep.GRPCAuthority)
+	}
+}

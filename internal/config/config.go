@@ -151,8 +151,16 @@ type Dependency struct {
 	TLS           *bool // enable TLS
 	TLSSkipVerify *bool // skip TLS certificate verification
 
+	// HTTP-specific: overrides Host header (and TLS SNI when HTTPS).
+	// Useful when health-checking services behind ingress/gateway by IP address.
+	HostHeader string
+
 	// gRPC-specific: target service name for gRPC health check protocol.
 	GRPCServiceName string
+
+	// gRPC-specific: overrides :authority pseudo-header (and TLS SNI when TLS).
+	// Useful for gRPC services behind reverse proxy.
+	GRPCAuthority string
 
 	// Database-specific: custom health-check queries (default: SELECT 1).
 	PostgresQuery string
@@ -835,12 +843,14 @@ func parseSingleDep(name, depType string, ga globalAuth) (Dependency, error) {
 		if err := parseTLSOptions(&dep, name, prefix); err != nil {
 			return dep, err
 		}
+		dep.HostHeader = os.Getenv(prefix + "HOST_HEADER")
 
 	case "grpc":
 		dep.GRPCServiceName = os.Getenv(prefix + "GRPC_SERVICE_NAME")
 		if err := parseTLSOptions(&dep, name, prefix); err != nil {
 			return dep, err
 		}
+		dep.GRPCAuthority = os.Getenv(prefix + "GRPC_AUTHORITY")
 
 	case "postgres":
 		dep.PostgresQuery = os.Getenv(prefix + "POSTGRES_QUERY")

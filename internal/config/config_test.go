@@ -2547,3 +2547,102 @@ func TestLoad_LDAP_AnonymousBind(t *testing.T) {
 		t.Error("Critical should be false")
 	}
 }
+
+func TestLoad_HTTPHostHeader(t *testing.T) {
+	setEnvs(t, map[string]string{
+		"DEPHEALTH_NAME":             "app",
+		"DEPHEALTH_GROUP":            "test",
+		"DEPHEALTH_DEPS":             "web:http",
+		"DEPHEALTH_WEB_URL":          "http://10.0.0.1:80",
+		"DEPHEALTH_WEB_CRITICAL":     "yes",
+		"DEPHEALTH_WEB_HOST_HEADER":  "myapp.example.com",
+	})
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	dep := cfg.Dependencies[0]
+	if dep.HostHeader != "myapp.example.com" {
+		t.Errorf("HostHeader = %q, want %q", dep.HostHeader, "myapp.example.com")
+	}
+}
+
+func TestLoad_GRPCAuthority(t *testing.T) {
+	setEnvs(t, map[string]string{
+		"DEPHEALTH_NAME":                "app",
+		"DEPHEALTH_GROUP":               "test",
+		"DEPHEALTH_DEPS":                "svc:grpc",
+		"DEPHEALTH_SVC_HOST":            "10.0.0.2",
+		"DEPHEALTH_SVC_PORT":            "443",
+		"DEPHEALTH_SVC_CRITICAL":        "yes",
+		"DEPHEALTH_SVC_GRPC_AUTHORITY":  "myservice.example.com",
+	})
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	dep := cfg.Dependencies[0]
+	if dep.GRPCAuthority != "myservice.example.com" {
+		t.Errorf("GRPCAuthority = %q, want %q", dep.GRPCAuthority, "myservice.example.com")
+	}
+}
+
+func TestLoad_HostHeaderNotSetByDefault(t *testing.T) {
+	setEnvs(t, map[string]string{
+		"DEPHEALTH_NAME":         "app",
+		"DEPHEALTH_GROUP":        "test",
+		"DEPHEALTH_DEPS":         "web:http",
+		"DEPHEALTH_WEB_URL":      "http://web.svc:8080",
+		"DEPHEALTH_WEB_CRITICAL": "yes",
+	})
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	dep := cfg.Dependencies[0]
+	if dep.HostHeader != "" {
+		t.Errorf("HostHeader = %q, want empty", dep.HostHeader)
+	}
+}
+
+func TestLoad_ConfigFile_HostHeaderAndGRPCAuthority(t *testing.T) {
+	yamlContent := `
+name: yaml-app
+group: test
+dependencies:
+  - name: web
+    type: http
+    url: "http://10.0.0.1:80"
+    critical: true
+    hostHeader: "myapp.example.com"
+  - name: svc
+    type: grpc
+    host: "10.0.0.2"
+    port: "443"
+    critical: true
+    grpcAuthority: "myservice.example.com"
+`
+	path := writeTestYAML(t, yamlContent)
+	t.Setenv("CONFIG_FILE", path)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(cfg.Dependencies) != 2 {
+		t.Fatalf("Dependencies count = %d, want 2", len(cfg.Dependencies))
+	}
+
+	httpDep := cfg.Dependencies[0]
+	if httpDep.HostHeader != "myapp.example.com" {
+		t.Errorf("httpDep.HostHeader = %q, want %q", httpDep.HostHeader, "myapp.example.com")
+	}
+
+	grpcDep := cfg.Dependencies[1]
+	if grpcDep.GRPCAuthority != "myservice.example.com" {
+		t.Errorf("grpcDep.GRPCAuthority = %q, want %q", grpcDep.GRPCAuthority, "myservice.example.com")
+	}
+}

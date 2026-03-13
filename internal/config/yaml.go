@@ -78,7 +78,9 @@ type yamlDep struct {
 	Timeout         string       `yaml:"timeout"`
 	TLS             *bool        `yaml:"tls"`
 	TLSSkipVerify   *bool        `yaml:"tlsSkipVerify"`
+	HostHeader      string       `yaml:"hostHeader"`
 	GRPCServiceName string       `yaml:"grpcServiceName"`
+	GRPCAuthority   string       `yaml:"grpcAuthority"`
 	PostgresQuery   string       `yaml:"postgresQuery"`
 	MySQLQuery      string       `yaml:"mysqlQuery"`
 	RedisPassword   string       `yaml:"redisPassword"`
@@ -197,7 +199,9 @@ func convertYAMLDep(yd *yamlDep) (Dependency, error) {
 		HealthPath:        yd.HealthPath,
 		TLS:               yd.TLS,
 		TLSSkipVerify:     yd.TLSSkipVerify,
+		HostHeader:        yd.HostHeader,
 		GRPCServiceName:   yd.GRPCServiceName,
+		GRPCAuthority:     yd.GRPCAuthority,
 		PostgresQuery:     yd.PostgresQuery,
 		MySQLQuery:        yd.MySQLQuery,
 		RedisPassword:     yd.RedisPassword,
