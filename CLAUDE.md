@@ -230,7 +230,7 @@ make help
   - `app_dependency_status` (gauge, enum pattern: one status value set to 1, rest to 0; label `status` with values: ok, timeout, connection_error, dns_error, auth_error, tls_error, unhealthy, error)
   - `app_dependency_status_detail` (gauge, info pattern: always 1 with `detail` label containing human-readable reason)
 - Base labels (all metrics): `name`, `group`, `dependency`, `type`, `host`, `port`, `critical`
-- Custom labels supported via `WithLabel()` / `DEPHEALTH_<DEP>_LABEL_<KEY>` env vars
+- Optional `isentry` label via `DEPHEALTH_ISENTRY` env var
 - Built-in checker factories registered via `_ "github.com/BigKAA/topologymetrics/sdk-go/dephealth/checks"`
 
 ### Configuration Model

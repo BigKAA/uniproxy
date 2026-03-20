@@ -31,7 +31,7 @@
 
 ```bash
 # Сборка образа
-docker build -t uniproxy:0.5.0 .
+docker build -t uniproxy:0.7.1 .
 
 # Запуск с HTTP-зависимостью
 docker run -p 8080:8080 \
@@ -40,7 +40,7 @@ docker run -p 8080:8080 \
   -e DEPHEALTH_DEPS="httpbin:http" \
   -e DEPHEALTH_HTTPBIN_URL="http://httpbin.org" \
   -e DEPHEALTH_HTTPBIN_CRITICAL=yes \
-  uniproxy:0.5.0
+  uniproxy:0.7.1
 ```
 
 ### Docker Compose
@@ -105,7 +105,7 @@ uniproxy поддерживает два метода конфигурации:
 docker run -p 8080:8080 \
   -e CONFIG_FILE=/config/config.yaml \
   -v ./config.yaml:/config/config.yaml:ro \
-  uniproxy:0.5.0
+  uniproxy:0.7.1
 ```
 
 Пример YAML-файла:
@@ -262,7 +262,7 @@ docker run -p 8080:8080 \
   -e AUTH_METHOD=bearer \
   -e AUTH_TOKEN=my-secret-token \
   -e AUTH_METRICS_METHOD=none \
-  uniproxy:0.5.0
+  uniproxy:0.7.1
 
 # Проверка доступа
 curl http://localhost:8080/                                        # 401
@@ -350,7 +350,7 @@ docker run -p 8080:8080 \
   -e DEPHEALTH_GRPC_SVC_CRITICAL=yes \
   -e DEPHEALTH_GRPC_SVC_BASIC_USER=admin \
   -e DEPHEALTH_GRPC_SVC_BASIC_PASS=secret \
-  uniproxy:0.5.0
+  uniproxy:0.7.1
 ```
 
 ### Поддерживаемые типы зависимостей
@@ -439,7 +439,7 @@ docker run -p 8080:8080 \
   -e DEPHEALTH_CACHE_CRITICAL=no \
   -e DEPHEALTH_DB_URL="postgres://user:pass@pg.svc:5432/mydb" \
   -e DEPHEALTH_DB_CRITICAL=yes \
-  uniproxy:0.5.0
+  uniproxy:0.7.1
 ```
 
 ## API-эндпоинты

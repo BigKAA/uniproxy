@@ -17,7 +17,7 @@
 #   make clean          — очистка кэшей
 
 # --- Переменные ---
-GO_VERSION     ?= 1.25
+GO_VERSION     ?= 1.25.8
 LINT_VERSION   ?= v2.8.0
 IMAGE_REGISTRY ?= docker.io
 

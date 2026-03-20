@@ -1,6 +1,6 @@
 module github.com/BigKAA/uniproxy
 
-go 1.25.6
+go 1.25.8
 
 require (
 	github.com/BigKAA/topologymetrics/sdk-go v0.8.2

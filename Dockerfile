@@ -1,4 +1,4 @@
-FROM harbor.kryukov.lan/docker/library/golang:1.25-alpine AS builder
+FROM harbor.kryukov.lan/docker/library/golang:1.25.8-alpine AS builder
 WORKDIR /build
 COPY go.mod go.sum ./
 RUN go mod download
