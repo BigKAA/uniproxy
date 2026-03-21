@@ -2,5 +2,5 @@ apiVersion: v2
 name: dephealth-uniproxy
 description: Universal test proxy for dephealth topology testing
 version: 0.6.0
-appVersion: "0.7.1"
+appVersion: "0.7.3"
 type: application
