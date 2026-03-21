@@ -41,6 +41,7 @@ type Config struct {
 	ShutdownTimeout time.Duration         // graceful shutdown timeout (default 30s)
 	CircuitBreaker  *CircuitBreakerConfig // circuit breaker settings for downstream HTTP fetches
 	HTTPTransport   *HTTPTransportConfig  // HTTP client transport settings for connection pooling
+	TLS             *TLSConfig            // TLS/SSL configuration for HTTPS server
 }
 
 // CircuitBreakerConfig configures the circuit breaker pattern for downstream HTTP fetches.
@@ -55,6 +56,17 @@ type HTTPTransportConfig struct {
 	MaxIdleConns        int           // maximum idle connections across all hosts (default 100)
 	MaxIdleConnsPerHost int           // maximum idle connections per host (default 10)
 	IdleConnTimeout     time.Duration // idle connection timeout (default 90s)
+}
+
+// TLSConfig configures HTTPS server for uniproxy.
+// Supports both file-based certificates and inline certificate data (for K8s Secrets).
+type TLSConfig struct {
+	Enabled    bool   // enable HTTPS server
+	CertFile   string // path to certificate file (PEM)
+	KeyFile    string // path to private key file (PEM)
+	CertData   string // inline certificate content (alternative to CertFile)
+	KeyData    string // inline private key content (alternative to KeyFile)
+	ListenAddr string // HTTPS listen address (default ":8443" when TLS enabled)
 }
 
 // AuthConfig describes server-side (incoming) authentication for protected endpoints.
@@ -391,6 +403,11 @@ func applyEnvOverrides(cfg *Config) error {
 		cfg.HTTPTransport.IdleConnTimeout = d
 	}
 
+	// TLS server configuration.
+	if err := applyTLSEnvOverrides(cfg); err != nil {
+		return err
+	}
+
 	// Server-side (incoming) auth for status and metrics endpoints.
 	if err := loadServerAuth(cfg); err != nil {
 		return err
@@ -463,6 +480,100 @@ func applyLogEnvOverrides(lc *LogConfig) error {
 		lc.SourceKey = v
 	}
 	return nil
+}
+
+// applyTLSEnvOverrides reads TLS_* environment variables and overwrites the
+// corresponding TLSConfig fields. Fields not set via env vars are left unchanged.
+//
+// Recognized env vars:
+//   - TLS_ENABLED: enable HTTPS ("yes"/"no")
+//   - TLS_CERT_FILE: path to certificate file
+//   - TLS_KEY_FILE: path to private key file
+//   - TLS_CERT_DATA: inline certificate content (alternative to FILE)
+//   - TLS_KEY_DATA: inline private key content (alternative to FILE)
+//   - TLS_LISTEN_ADDR: HTTPS listen address (default ":8443" when TLS enabled)
+func applyTLSEnvOverrides(cfg *Config) error {
+	// Check if any TLS env var is set to determine if we need to create TLS config.
+	enabled := os.Getenv("TLS_ENABLED")
+	certFile := os.Getenv("TLS_CERT_FILE")
+	keyFile := os.Getenv("TLS_KEY_FILE")
+	certData := os.Getenv("TLS_CERT_DATA")
+	keyData := os.Getenv("TLS_KEY_DATA")
+	listenAddr := os.Getenv("TLS_LISTEN_ADDR")
+
+	// If no TLS env vars are set, skip TLS configuration.
+	if enabled == "" && certFile == "" && keyFile == "" && certData == "" && keyData == "" && listenAddr == "" {
+		return nil
+	}
+
+	// Create TLS config if it doesn't exist.
+	if cfg.TLS == nil {
+		cfg.TLS = &TLSConfig{}
+	}
+
+	// Parse enabled flag.
+	if enabled != "" {
+		b, err := parseBool(enabled)
+		if err != nil {
+			return fmt.Errorf("invalid TLS_ENABLED: %w", err)
+		}
+		cfg.TLS.Enabled = b
+	}
+
+	// Certificate and key from files.
+	if certFile != "" {
+		cfg.TLS.CertFile = certFile
+	}
+	if keyFile != "" {
+		cfg.TLS.KeyFile = keyFile
+	}
+
+	// Certificate and key from inline data (for K8s Secrets).
+	if certData != "" {
+		cfg.TLS.CertData = certData
+	}
+	if keyData != "" {
+		cfg.TLS.KeyData = keyData
+	}
+
+	// Listen address for HTTPS server.
+	if listenAddr != "" {
+		cfg.TLS.ListenAddr = listenAddr
+	}
+
+	return nil
+}
+
+// validateTLS checks the TLS configuration for correctness.
+// Returns an error if TLS is enabled but certificates are missing or invalid.
+func validateTLS(tls *TLSConfig) error {
+	if tls == nil || !tls.Enabled {
+		return nil
+	}
+
+	// When TLS is enabled, must have either file-based or inline certificates.
+	hasFileCert := tls.CertFile != "" && tls.KeyFile != ""
+	hasInlineCert := tls.CertData != "" && tls.KeyData != ""
+
+	if !hasFileCert && !hasInlineCert {
+		return fmt.Errorf("TLS is enabled but no certificates configured; provide either TLS_CERT_FILE+TLS_KEY_FILE or TLS_CERT_DATA+TLS_KEY_DATA")
+	}
+
+	// Cannot mix file and inline certificates (ambiguous).
+	if tls.CertFile != "" && tls.CertData != "" {
+		return fmt.Errorf("ambiguous TLS certificate: both TLS_CERT_FILE and TLS_CERT_DATA are set; use only one")
+	}
+	if tls.KeyFile != "" && tls.KeyData != "" {
+		return fmt.Errorf("ambiguous TLS key: both TLS_KEY_FILE and TLS_KEY_DATA are set; use only one")
+	}
+
+	return nil
+}
+
+// ValidateTLSConfig is the exported wrapper around validateTLS, exposed for
+// use in tests of packages that cannot access unexported functions.
+func ValidateTLSConfig(tls *TLSConfig) error {
+	return validateTLS(tls)
 }
 
 // applyDefaults fills in default values for fields not set by YAML or env vars.
@@ -564,6 +675,11 @@ func validate(cfg *Config) error {
 		if cfg.HTTPTransport.IdleConnTimeout < 0 {
 			return fmt.Errorf("HTTP_TRANSPORT_IDLE_CONN_TIMEOUT must be non-negative, got %v", cfg.HTTPTransport.IdleConnTimeout)
 		}
+	}
+
+	// Validate TLS configuration if enabled.
+	if err := validateTLS(cfg.TLS); err != nil {
+		return err
 	}
 
 	// Validate server-side auth for both endpoint zones.

@@ -178,6 +178,14 @@ dependencies:
 | `HTTP_TRANSPORT_MAX_IDLE_CONNS` | Нет | `100` | Всего idle HTTP соединений для всех хостов |
 | `HTTP_TRANSPORT_MAX_IDLE_CONNS_PER_HOST` | Нет | `10` | Idle соединений на один хост |
 | `HTTP_TRANSPORT_IDLE_CONN_TIMEOUT` | Нет | `90s` | Таймаут idle соединений (Go duration) |
+| `TLS_ENABLED` | Нет | `false` | Включить HTTPS сервер (`yes`/`no`) |
+| `TLS_CERT_FILE` | Нет* | — | Путь к файлу TLS-сертификата (PEM) |
+| `TLS_KEY_FILE` | Нет* | — | Путь к файлу закрытого ключа (PEM) |
+| `TLS_CERT_DATA` | Нет* | — | Inline содержимое TLS-сертификата (альтернатива FILE) |
+| `TLS_KEY_DATA` | Нет* | — | Inline содержимое закрытого ключа (альтернатива FILE) |
+| `TLS_LISTEN_ADDR` | Нет | `:8443` | Адрес HTTPS-сервера (когда TLS включен) |
+
+*Когда `TLS_ENABLED=yes`, требуется либо `TLS_CERT_FILE`+`TLS_KEY_FILE`, либо `TLS_CERT_DATA`+`TLS_KEY_DATA`.
 
 ### Переменные для каждой зависимости
 
@@ -257,6 +265,82 @@ uniproxy поддерживает серверную аутентификаци�
 | `AUTH_METRICS_API_KEY` | API-ключ для `/metrics` |
 
 Все переменные `_PASS`, `_TOKEN` и `_API_KEY` поддерживают суффикс `_FILE`.
+
+### HTTPS сервер (TLS)
+
+uniproxy поддерживает HTTPS-сервер с TLS-терминацией. При включении сервер слушает на порту 8443 по умолчанию (настраивается через `TLS_LISTEN_ADDR`).
+
+#### Способы конфигурации TLS
+
+| Способ | Описание |
+|--------|----------|
+| **Файл** | Укажите пути к файлам сертификата и ключа через `TLS_CERT_FILE` и `TLS_KEY_FILE` |
+| **Inline** | Укажите содержимое сертификата и ключа напрямую через `TLS_CERT_DATA` и `TLS_KEY_DATA` |
+
+Inline-режим полезен для Kubernetes-развёртываний, где сертификаты хранятся в Secrets и монтируются как файлы или передаются через переменные окружения.
+
+#### Переменные TLS
+
+| Переменная | Обязательная | Описание |
+|------------|:------------:|----------|
+| `TLS_ENABLED` | Да | Включить HTTPS: `yes` или `no` |
+| `TLS_CERT_FILE` | Да* | Путь к файлу сертификата (PEM) |
+| `TLS_KEY_FILE` | Да* | Путь к файлу закрытого ключа (PEM) |
+| `TLS_CERT_DATA` | Да* | Inline содержимое сертификата |
+| `TLS_KEY_DATA` | Да* | Inline содержимое закрытого ключа |
+| `TLS_LISTEN_ADDR` | Нет | Адрес HTTPS-сервера (по умолчанию: `:8443`) |
+
+*Требуется либо файловый (`TLS_CERT_FILE`+`TLS_KEY_FILE`), либо inline (`TLS_CERT_DATA`+`TLS_KEY_DATA`) при включённом TLS.
+
+#### Примеры TLS
+
+**Файл-based сертификаты:**
+
+```bash
+docker run -p 8443:8443 \
+  -e DEPHEALTH_NAME=my-proxy \
+  -e DEPHEALTH_GROUP=my-group \
+  -e DEPHEALTH_DEPS="httpbin:http" \
+  -e DEPHEALTH_HTTPBIN_URL="http://httpbin.org" \
+  -e DEPHEALTH_HTTPBIN_CRITICAL=yes \
+  -e TLS_ENABLED=yes \
+  -e TLS_CERT_FILE=/certs/server.crt \
+  -e TLS_KEY_FILE=/certs/server.key \
+  -v ./certs:/certs:ro \
+  uniproxy:0.7.3
+```
+
+**Inline сертификаты (K8s Secrets):**
+
+```bash
+# Сертификаты передаются как переменные окружения из K8s Secrets
+docker run -p 8443:8443 \
+  -e DEPHEALTH_NAME=my-proxy \
+  -e DEPHEALTH_GROUP=my-group \
+  -e DEPHEALTH_DEPS="httpbin:http" \
+  -e DEPHEALTH_HTTPBIN_URL="http://httpbin.org" \
+  -e DEPHEALTH_HTTPBIN_CRITICAL=yes \
+  -e TLS_ENABLED=yes \
+  -e TLS_CERT_DATA="$(cat /var/run/secrets/tls.crt)" \
+  -e TLS_KEY_DATA="$(cat /var/run/secrets/tls.key)" \
+  uniproxy:0.7.3
+```
+
+**YAML-конфигурация:**
+
+```yaml
+tls:
+  enabled: true
+  certData: |
+    -----BEGIN CERTIFICATE-----
+    MIIDXTCCAkWgAwIBAgIJAKZ...
+    -----END CERTIFICATE-----
+  keyData: |
+    -----BEGIN PRIVATE KEY-----
+    MIIEvQIBADANBgkqhkiG9w0B...
+    -----END PRIVATE KEY-----
+  listenAddr: ":8443"
+```
 
 #### Примеры серверной аутентификации
 

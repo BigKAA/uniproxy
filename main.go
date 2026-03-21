@@ -111,13 +111,45 @@ func main() {
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
-	// Start the HTTP server in a separate goroutine so the main goroutine
+	// Determine the effective listen address.
+	// If TLS is enabled, use the TLS-specific listen address if set, otherwise default to :8443.
+	listenAddr := cfg.ListenAddr
+	if cfg.TLS != nil && cfg.TLS.Enabled {
+		if cfg.TLS.ListenAddr != "" {
+			listenAddr = cfg.TLS.ListenAddr
+		} else {
+			listenAddr = ":8443"
+		}
+		httpServer.Addr = listenAddr
+	}
+
+	// Start the HTTP/HTTPS server in a separate goroutine so the main goroutine
 	// can block on the context cancellation signal.
 	serverErr := make(chan error, 1)
 	go func() {
-		slog.Info("server starting", "addr", cfg.ListenAddr)
-		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			serverErr <- err
+		slog.Info("server starting", "addr", listenAddr, "tls", cfg.TLS != nil && cfg.TLS.Enabled)
+		if cfg.TLS != nil && cfg.TLS.Enabled {
+			// HTTPS server: need to prepare certificate and key files.
+			// ListenAndServeTLS requires file paths, so if cert/key are provided
+			// as inline data, write them to temporary files.
+			certFile, keyFile, err := prepareTLSFiles(cfg.TLS)
+			if err != nil {
+				serverErr <- fmt.Errorf("failed to prepare TLS files: %w", err)
+				return
+			}
+			// Clean up temp files on shutdown.
+			defer func() {
+				_ = os.Remove(certFile)
+				_ = os.Remove(keyFile)
+			}()
+			if err := httpServer.ListenAndServeTLS(certFile, keyFile); err != nil && err != http.ErrServerClosed {
+				serverErr <- err
+			}
+		} else {
+			// HTTP server.
+			if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				serverErr <- err
+			}
 		}
 	}()
 
@@ -149,6 +181,60 @@ func main() {
 	} else {
 		slog.Info("HTTP server stopped gracefully")
 	}
+}
+
+// prepareTLSFiles returns the certificate and key file paths for HTTPS server.
+// If cert/key are provided as inline data (CertData/KeyData), writes them to
+// temporary files and returns those paths. Caller is responsible for cleanup.
+func prepareTLSFiles(tls *config.TLSConfig) (certPath, keyPath string, err error) {
+	// Determine cert source: file or inline data.
+	var certData, keyData string
+	if tls.CertFile != "" {
+		certData = tls.CertFile
+		keyData = tls.KeyFile
+	} else {
+		certData = tls.CertData
+		keyData = tls.KeyData
+	}
+
+	// If certData looks like a file path (exists and readable), use it directly.
+	// Otherwise treat it as inline certificate content and write to temp file.
+	if _, err := os.Stat(certData); err == nil {
+		// Cert file exists — assume key file also exists and is valid.
+		return certData, keyData, nil
+	}
+
+	// Write inline cert/key to temporary files.
+	certFile, err := os.CreateTemp("", "uniproxy-tls-cert-*.pem")
+	if err != nil {
+		return "", "", fmt.Errorf("failed to create temp cert file: %w", err)
+	}
+	if _, err := certFile.WriteString(certData); err != nil {
+		_ = certFile.Close()
+		_ = os.Remove(certFile.Name())
+		return "", "", fmt.Errorf("failed to write temp cert: %w", err)
+	}
+	_ = certFile.Close()
+	certPath = certFile.Name()
+
+	keyFile, err := os.CreateTemp("", "uniproxy-tls-key-*.pem")
+	if err != nil {
+		_ = os.Remove(certPath)
+		return "", "", fmt.Errorf("failed to create temp key file: %w", err)
+	}
+	if _, err := keyFile.WriteString(keyData); err != nil {
+		_ = keyFile.Close()
+		_ = os.Remove(certPath)
+		_ = os.Remove(keyFile.Name())
+		return "", "", fmt.Errorf("failed to write temp key: %w", err)
+	}
+	_ = keyFile.Close()
+	keyPath = keyFile.Name()
+
+	// Make key file readable only by owner for security.
+	_ = os.Chmod(keyPath, 0o600)
+
+	return certPath, keyPath, nil
 }
 
 // buildOptions creates the slice of dephealth SDK options from the application config.

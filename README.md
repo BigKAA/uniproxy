@@ -178,6 +178,14 @@ See [examples/config.yaml](./examples/config.yaml) for a full example with all f
 | `HTTP_TRANSPORT_MAX_IDLE_CONNS` | No | `100` | Total idle HTTP connections across all hosts |
 | `HTTP_TRANSPORT_MAX_IDLE_CONNS_PER_HOST` | No | `10` | Idle connections per single host |
 | `HTTP_TRANSPORT_IDLE_CONN_TIMEOUT` | No | `90s` | Idle connection timeout (Go duration) |
+| `TLS_ENABLED` | No | `false` | Enable HTTPS server (`yes`/`no`) |
+| `TLS_CERT_FILE` | No* | — | Path to TLS certificate file (PEM) |
+| `TLS_KEY_FILE` | No* | — | Path to TLS private key file (PEM) |
+| `TLS_CERT_DATA` | No* | — | Inline TLS certificate content (alternative to FILE) |
+| `TLS_KEY_DATA` | No* | — | Inline TLS private key content (alternative to FILE) |
+| `TLS_LISTEN_ADDR` | No | `:8443` | HTTPS listen address (when TLS enabled) |
+
+*Either `TLS_CERT_FILE`+`TLS_KEY_FILE` or `TLS_CERT_DATA`+`TLS_KEY_DATA` is required when `TLS_ENABLED=yes`.
 
 ### Per-Dependency Variables
 
@@ -257,6 +265,82 @@ Each zone (`status`, `metrics`) can override the global auth settings:
 | `AUTH_METRICS_API_KEY` | Override API key for `/metrics` |
 
 All `_PASS`, `_TOKEN`, and `_API_KEY` variables support the `_FILE` suffix pattern.
+
+### HTTPS Server (TLS)
+
+uniproxy supports HTTPS server with TLS termination. When enabled, the server listens on port 8443 by default (configurable via `TLS_LISTEN_ADDR`).
+
+#### TLS Configuration Methods
+
+| Method | Description |
+|--------|-------------|
+| **File-based** | Provide paths to certificate and key files via `TLS_CERT_FILE` and `TLS_KEY_FILE` |
+| **Inline** | Provide certificate and key content directly via `TLS_CERT_DATA` and `TLS_KEY_DATA` |
+
+Inline mode is useful for Kubernetes deployments where certificates are stored in Secrets and mounted as files or passed as environment variables.
+
+#### TLS Environment Variables
+
+| Variable | Required | Description |
+|----------|:--------:|-------------|
+| `TLS_ENABLED` | Yes | Enable HTTPS: `yes` or `no` |
+| `TLS_CERT_FILE` | Yes* | Path to certificate file (PEM) |
+| `TLS_KEY_FILE` | Yes* | Path to private key file (PEM) |
+| `TLS_CERT_DATA` | Yes* | Inline certificate content |
+| `TLS_KEY_DATA` | Yes* | Inline private key content |
+| `TLS_LISTEN_ADDR` | No | HTTPS listen address (default: `:8443`) |
+
+*Either file-based (`TLS_CERT_FILE`+`TLS_KEY_FILE`) or inline (`TLS_CERT_DATA`+`TLS_KEY_DATA`) is required when TLS is enabled.
+
+#### TLS Examples
+
+**File-based certificates:**
+
+```bash
+docker run -p 8443:8443 \
+  -e DEPHEALTH_NAME=my-proxy \
+  -e DEPHEALTH_GROUP=my-group \
+  -e DEPHEALTH_DEPS="httpbin:http" \
+  -e DEPHEALTH_HTTPBIN_URL="http://httpbin.org" \
+  -e DEPHEALTH_HTTPBIN_CRITICAL=yes \
+  -e TLS_ENABLED=yes \
+  -e TLS_CERT_FILE=/certs/server.crt \
+  -e TLS_KEY_FILE=/certs/server.key \
+  -v ./certs:/certs:ro \
+  uniproxy:0.7.3
+```
+
+**Inline certificates (K8s Secrets):**
+
+```bash
+# Certificates passed as environment variables from K8s Secrets
+docker run -p 8443:8443 \
+  -e DEPHEALTH_NAME=my-proxy \
+  -e DEPHEALTH_GROUP=my-group \
+  -e DEPHEALTH_DEPS="httpbin:http" \
+  -e DEPHEALTH_HTTPBIN_URL="http://httpbin.org" \
+  -e DEPHEALTH_HTTPBIN_CRITICAL=yes \
+  -e TLS_ENABLED=yes \
+  -e TLS_CERT_DATA="$(cat /var/run/secrets/tls.crt)" \
+  -e TLS_KEY_DATA="$(cat /var/run/secrets/tls.key)" \
+  uniproxy:0.7.3
+```
+
+**YAML configuration:**
+
+```yaml
+tls:
+  enabled: true
+  certData: |
+    -----BEGIN CERTIFICATE-----
+    MIIDXTCCAkWgAwIBAgIJAKZ...
+    -----END CERTIFICATE-----
+  keyData: |
+    -----BEGIN PRIVATE KEY-----
+    MIIEvQIBADANBgkqhkiG9w0B...
+    -----END PRIVATE KEY-----
+  listenAddr: ":8443"
+```
 
 #### Server Auth Examples
 

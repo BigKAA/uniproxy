@@ -195,3 +195,27 @@ dependencies:
   #   host: kafka.svc
   #   port: "9092"
   #   critical: false
+
+# TLS/SSL configuration for HTTPS server.
+# When enabled, server listens on :8443 by default (configurable via listenAddr).
+# Supports two modes:
+#   1. File-based: provide certFile and keyFile paths
+#   2. Inline: provide certData and keyData with PEM content
+# The inline mode is useful for Kubernetes deployments where certificates
+# are stored in Secrets and passed as environment variables.
+# tls:
+#   enabled: true
+#   # For file-based certificates:
+#   certFile: /certs/server.crt
+#   keyFile: /certs/server.key
+#   # For inline certificates (uncomment and use one mode):
+#   # certData: |
+#   #   -----BEGIN CERTIFICATE-----
+#   #   MIIDXTCCAkWgAwIBAgIJAKZ...
+#   #   -----END CERTIFICATE-----
+#   # keyData: |
+#   #   -----BEGIN PRIVATE KEY-----
+#   #   MIIEvQIBADANBgkqhkiG9w0B...
+#   #   -----END PRIVATE KEY-----
+#   # Override default :8443 listen address when TLS is enabled:
+#   # listenAddr: ":8443"
