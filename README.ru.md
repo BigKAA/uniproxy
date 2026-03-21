@@ -15,6 +15,8 @@
 ### Возможности
 
 - Проверка здоровья зависимостей: HTTP, gRPC, PostgreSQL, MySQL, Redis, AMQP, Kafka, LDAP, TCP
+- **Graceful shutdown** с настраиваемым таймаутом (30с по умолчанию) — активные запросы завершаются корректно
+- **Circuit breaker** для downstream HTTP-запросов — предотвращает каскадные сбои и снижает нагрузку на проблемные зависимости
 - Опциональная метка `isentry` для обозначения точек входа в визуализации топологии
 - Enriched Status API — детальная информация о зависимостях и рекурсивный просмотр цепочек HTTP
 - Конфигурация через переменные окружения или YAML-файл (12-factor app)
@@ -371,6 +373,47 @@ docker run -p 8080:8080 \
   -e DEPHEALTH_CORP_LDAP_LDAP_BIND_PASSWORD="secret" \
   -e DEPHEALTH_CORP_LDAP_LDAP_START_TLS=yes \
   uniproxy:latest
+```
+
+### Graceful Shutdown
+
+При получении SIGINT/SIGTERM uniproxy выполняет корректное завершение:
+
+1. Останавливает планирование проверок здоровья (новые проверки не запускаются)
+2. Ждёт завершения активных HTTP-запросов (до 30 секунд)
+3. Закрывает HTTP-сервер
+
+```
+# Отправляем SIGTERM
+kubectl delete pod uniproxy-xxx --grace-period=30
+
+# В логах видно graceful shutdown
+level=info msg="shutting down"
+level=info msg="stopping health checks"
+level=info msg="shutting down HTTP server" timeout=30s
+level=info msg="HTTP server stopped gracefully"
+```
+
+### Circuit Breaker
+
+Для рекурсивных HTTP-запросов (`?detail=true&depth=N`) uniproxy реализует паттерн circuit breaker для каждого downstream endpoint:
+
+| Состояние | Поведение |
+|-----------|-----------|
+| **Closed** | Нормальные запросы проходят; ошибки считаются |
+| **Open** | После 5 последовательных ошибок; запросы отклоняются без сетевого вызова |
+| **Half-Open** | Через 60с в Open; разрешены 3 тестовых запроса |
+
+Circuit breaker предотвращает каскадные сбои при проблемах с downstream-сервисами.
+
+**Метрики:**
+```prometheus
+# Состояние circuit breaker (0=closed, 1=half-open, 2=open)
+uniproxy_circuit_breaker_state{downstream="backend:8080"}
+
+# Счётчики запросов по результату
+uniproxy_circuit_breaker_requests_total{downstream="backend:8080", state="success"}
+uniproxy_circuit_breaker_requests_total{downstream="backend:8080", state="failure"}
 ```
 
 ### Пользовательский Host Header (маршрутизация через Ingress/Proxy)

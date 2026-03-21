@@ -7,12 +7,25 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"sync"
 	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
+	"github.com/sony/gobreaker"
 )
 
 // maxResponseSize limits the body size read from downstream HTTP dependencies
 // to prevent memory exhaustion from malicious or unexpectedly large responses.
 const maxResponseSize = 1 << 20 // 1 MiB
+
+// Circuit breaker settings.
+const (
+	cbName          = "downstream_fetch"
+	cbMaxFailures   = 5                // open after 5 consecutive failures
+	cbTimeout       = 60 * time.Second // time in open state before half-open
+	cbHalfOpenLimit = 3                // allow 3 requests in half-open state
+)
 
 // fetchClient is a dedicated HTTP client for downstream fetches with
 // transport-level settings independent of http.DefaultClient.
@@ -23,6 +36,90 @@ var fetchClient = &http.Client{
 	CheckRedirect: func(*http.Request, []*http.Request) error {
 		return http.ErrUseLastResponse
 	},
+}
+
+// cbRegistry stores circuit breakers per downstream endpoint (host:port).
+// Thread-safe via sync.Map.
+var cbRegistry sync.Map
+
+// circuitBreakerMetrics holds Prometheus metrics for circuit breaker states.
+var circuitBreakerMetrics = promauto.NewGaugeVec(
+	prometheus.GaugeOpts{
+		Name: "uniproxy_circuit_breaker_state",
+		Help: "Circuit breaker state (0=closed, 1=half-open, 2=open) per downstream",
+	},
+	[]string{"downstream"},
+)
+
+// circuitBreakerRequestsTotal counts circuit breaker state transitions.
+var circuitBreakerRequestsTotal = promauto.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "uniproxy_circuit_breaker_requests_total",
+		Help: "Total requests processed by circuit breaker per state",
+	},
+	[]string{"downstream", "state"},
+)
+
+// getOrCreateCB returns an existing circuit breaker for the endpoint
+// or creates a new one if it doesn't exist.
+func getOrCreateCB(name string) *gobreaker.CircuitBreaker {
+	if cb, ok := cbRegistry.Load(name); ok {
+		return cb.(*gobreaker.CircuitBreaker)
+	}
+
+	cb := gobreaker.NewCircuitBreaker(gobreaker.Settings{
+		Name:        name,
+		MaxRequests: cbHalfOpenLimit,
+		Interval:    0, // don't reset counter in closed state
+		Timeout:     cbTimeout,
+		ReadyToTrip: func(counts gobreaker.Counts) bool {
+			return counts.ConsecutiveFailures >= cbMaxFailures
+		},
+		OnStateChange: func(name string, from gobreaker.State, to gobreaker.State) {
+			stateVal := float64(0)
+			switch to {
+			case gobreaker.StateClosed:
+				stateVal = 0
+			case gobreaker.StateHalfOpen:
+				stateVal = 1
+			case gobreaker.StateOpen:
+				stateVal = 2
+			}
+			circuitBreakerMetrics.WithLabelValues(name).Set(stateVal)
+			slog.Info("circuit breaker state change",
+				"name", name,
+				"from", from.String(),
+				"to", to.String(),
+			)
+		},
+	})
+
+	actual, _ := cbRegistry.LoadOrStore(name, cb)
+	return actual.(*gobreaker.CircuitBreaker)
+}
+
+// fetchWithCircuitBreaker wraps fetchHTTPResponse with circuit breaker logic.
+func fetchWithCircuitBreaker(ctx context.Context, host, port string, depth int, timeout time.Duration) *json.RawMessage {
+	cbName := fmt.Sprintf("%s:%s", host, port)
+	cb := getOrCreateCB(cbName)
+
+	result, _ := cb.Execute(func() (interface{}, error) {
+		resp := fetchHTTPResponse(ctx, host, port, depth, timeout)
+		if resp == nil {
+			// Return error to count as failure
+			return nil, fmt.Errorf("fetch failed")
+		}
+		return resp, nil
+	})
+
+	// Track request outcomes
+	if result != nil {
+		circuitBreakerRequestsTotal.WithLabelValues(cbName, "success").Inc()
+		return result.(*json.RawMessage)
+	}
+
+	circuitBreakerRequestsTotal.WithLabelValues(cbName, "failure").Inc()
+	return nil
 }
 
 // fetchHTTPResponse makes an HTTP GET request to an HTTP dependency's detail endpoint

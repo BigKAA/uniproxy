@@ -15,6 +15,8 @@
 ### Key Features
 
 - Health checking for HTTP, gRPC, PostgreSQL, MySQL, Redis, AMQP, Kafka, LDAP, and TCP dependencies
+- **Graceful shutdown** with configurable timeout (30s default) — allows active requests to complete
+- **Circuit breaker** for downstream HTTP fetches — prevents cascading failures and reduces load on unhealthy dependencies
 - Optional `isentry` label for marking entry-point applications in topology visualization
 - Enriched Status API with detailed dependency info and recursive HTTP chain visibility
 - Configuration via environment variables or YAML file (12-factor app)
@@ -371,6 +373,47 @@ docker run -p 8080:8080 \
   -e DEPHEALTH_CORP_LDAP_LDAP_BIND_PASSWORD="secret" \
   -e DEPHEALTH_CORP_LDAP_LDAP_START_TLS=yes \
   uniproxy:latest
+```
+
+### Graceful Shutdown
+
+When receiving SIGINT/SIGTERM, uniproxy performs a graceful shutdown:
+
+1. Stops health check scheduling (no new checks)
+2. Waits for active HTTP requests to complete (up to 30 seconds)
+3. Closes HTTP server
+
+```
+# Send SIGTERM
+kubectl delete pod uniproxy-xxx --grace-period=30
+
+# Logs show graceful shutdown
+level=info msg="shutting down"
+level=info msg="stopping health checks"
+level=info msg="shutting down HTTP server" timeout=30s
+level=info msg="HTTP server stopped gracefully"
+```
+
+### Circuit Breaker
+
+For recursive HTTP fetches (`?detail=true&depth=N`), uniproxy implements a circuit breaker pattern per downstream endpoint:
+
+| State | Behavior |
+|-------|----------|
+| **Closed** | Normal requests pass through; errors are counted |
+| **Open** | After 5 consecutive failures; requests fail fast (no network call) |
+| **Half-Open** | After 60s in Open state; 3 test requests allowed |
+
+Circuit breaker prevents cascading failures when downstream services are unhealthy.
+
+**Metrics:**
+```prometheus
+# Circuit breaker state (0=closed, 1=half-open, 2=open)
+uniproxy_circuit_breaker_state{downstream="backend:8080"}
+
+# Request counts by outcome
+uniproxy_circuit_breaker_requests_total{downstream="backend:8080", state="success"}
+uniproxy_circuit_breaker_requests_total{downstream="backend:8080", state="failure"}
 ```
 
 ### Custom Host Header (Ingress/Proxy Routing)

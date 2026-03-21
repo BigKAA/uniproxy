@@ -218,7 +218,7 @@ func (s *Server) handleDetail(w http.ResponseWriter, r *http.Request) {
 			wg.Add(1)
 			go func(k string, d *DependencyDetail) {
 				defer wg.Done()
-				result := fetchHTTPResponse(ctx, d.Host, d.Port, depth, s.fetchTimeout)
+				result := fetchWithCircuitBreaker(ctx, d.Host, d.Port, depth, s.fetchTimeout)
 				mu.Lock()
 				deps[k].Response = result
 				mu.Unlock()
