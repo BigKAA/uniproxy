@@ -4,7 +4,13 @@ This file provides guidance for AI agents working on the uniproxy codebase.
 
 ## Project Overview
 
-**uniproxy** is a Go application that health-checks dependencies using the dephealth SDK and exposes Prometheus metrics. Go 1.25+, dephealth SDK v0.8.2.
+**uniproxy** is a Go application that health-checks dependencies using the [dephealth SDK](https://github.com/BigKAA/topologymetrics) (`github.com/BigKAA/topologymetrics/sdk-go/dephealth` v0.8.2) and exposes Prometheus metrics. Go 1.25+.
+
+## Communication Requirements
+
+- **Russian language** for all communication and discussion
+- **English** for all code, comments, and documentation
+- Ask the user if uncertain rather than making assumptions
 
 ## Build, Test, and Quality Commands
 
@@ -56,6 +62,7 @@ make check-all
 ### General Principles
 
 - **Language**: Code and comments in English
+- **Discussion**: Russian language
 - **Documentation**: Package-level and public function docs required
 - **Errors**: Always handle errors explicitly; never ignore with `_`
 
@@ -72,7 +79,6 @@ make check-all
 - **Packages**: `snake_case` (e.g., `internal/auth`, `internal/config`)
 - **Functions**: `PascalCase` for exported, `camelCase` for unexported
 - **Interfaces**: `PascalCase` with `er` suffix (e.g., `HealthChecker`)
-- **Errors**: `Err` prefix for error variables (e.g., `ErrInvalidConfig`)
 
 ### Types
 
@@ -83,7 +89,6 @@ make check-all
 ### Error Handling
 
 - Return errors with context: `fmt.Errorf("failed to %s: %w", action, originalErr)`
-- Use sentinel errors for expected conditions: `if errors.Is(err, ErrNotFound)`
 - Wrap errors at call site, not in helper functions
 - Never use bare `panic()` except for unrecoverable initialization failures
 
@@ -101,13 +106,6 @@ make check-all
 - Table-driven tests preferred for multiple cases
 - Use `t.Helper()` for test helpers
 - Include race detection: `go test -race`
-
-### Git Workflow
-
-- Follow Conventional Commits: `<type>(<scope>): <subject>`
-- Types: `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `chore`
-- Branch naming: `feature/<description>`, `bugfix/<description>`, etc.
-- Never commit directly to main; use PR or `--no-ff` merge
 
 ## Architecture
 
@@ -164,15 +162,16 @@ From `.golangci.yml`: errcheck, govet, staticcheck, unused, ineffassign, misspel
 - `charts/uniproxy/`: Helm chart
 - `deploy/helm/uniproxy/`: Legacy multi-instance Helm chart
 
+## Git Workflow
+
+- Follow Conventional Commits: `<type>(<scope>): <subject>`
+- Types: `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `chore`
+- Branch naming: `feature/<description>`, `bugfix/<description>`, etc.
+- Never commit directly to main; use PR or `--no-ff` merge
+
 ## Important Constraints
 
 1. **No local execution**: Always use Docker or Kubernetes
 2. **12-factor app**: All runtime config via environment variables
 3. **SDK responsibility**: dephealth SDK handles health checking logic
 4. **Instance-based model**: Multiple independent instances supported
-
-## Communication
-
-- Discussion: Russian language
-- Code/Docs: English
-- Ask user if uncertain rather than making assumptions
