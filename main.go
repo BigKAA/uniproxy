@@ -115,9 +115,23 @@ func main() {
 		slog.Error("server error", "error", err)
 	}
 
-	// Graceful shutdown: stop health checks first, then close the HTTP server.
+	// Graceful shutdown with timeout.
+	// 1. Stop accepting new health check requests.
+	// 2. Shutdown HTTP server, allowing active requests to complete.
+	// 3. If timeout is exceeded, force shutdown.
+	const shutdownTimeout = 30 * time.Second
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	defer shutdownCancel()
+
+	slog.Info("stopping health checks")
 	dh.Stop()
-	_ = httpServer.Close()
+
+	slog.Info("shutting down HTTP server", "timeout", shutdownTimeout)
+	if err := httpServer.Shutdown(shutdownCtx); err != nil {
+		slog.Warn("HTTP server shutdown error", "error", err)
+	} else {
+		slog.Info("HTTP server stopped gracefully")
+	}
 }
 
 // buildOptions creates the slice of dephealth SDK options from the application config.
