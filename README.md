@@ -171,6 +171,13 @@ See [examples/config.yaml](./examples/config.yaml) for a full example with all f
 | `DEPHEALTH_TIMEOUT` | No | SDK default | Global health check timeout in seconds |
 | `DEPHEALTH_FETCH_TIMEOUT` | No | `5` | Timeout for recursive HTTP detail fetch in seconds |
 | `DEPHEALTH_ISENTRY` | No | — | Add `isentry=yes` label to all dependency metrics (`yes`/`no`) |
+| `SHUTDOWN_TIMEOUT` | No | `30` | Graceful shutdown timeout (Go duration format, e.g. `30s`, `1m`) |
+| `CIRCUIT_BREAKER_MAX_FAILURES` | No | `5` | Open circuit after N consecutive failures |
+| `CIRCUIT_BREAKER_TIMEOUT` | No | `60s` | Time in open state before half-open (Go duration) |
+| `CIRCUIT_BREAKER_HALF_OPEN_LIMIT` | No | `3` | Test requests allowed in half-open state |
+| `HTTP_TRANSPORT_MAX_IDLE_CONNS` | No | `100` | Total idle HTTP connections across all hosts |
+| `HTTP_TRANSPORT_MAX_IDLE_CONNS_PER_HOST` | No | `10` | Idle connections per single host |
+| `HTTP_TRANSPORT_IDLE_CONN_TIMEOUT` | No | `90s` | Idle connection timeout (Go duration) |
 
 ### Per-Dependency Variables
 
@@ -406,6 +413,12 @@ For recursive HTTP fetches (`?detail=true&depth=N`), uniproxy implements a circu
 
 Circuit breaker prevents cascading failures when downstream services are unhealthy.
 
+**HTTP Connection Pooling:**
+- Up to 100 idle connections across all hosts
+- Up to 10 idle connections per host
+- 90-second idle connection timeout
+- Connection reuse between requests
+
 **Metrics:**
 ```prometheus
 # Circuit breaker state (0=closed, 1=half-open, 2=open)
@@ -414,6 +427,10 @@ uniproxy_circuit_breaker_state{downstream="backend:8080"}
 # Request counts by outcome
 uniproxy_circuit_breaker_requests_total{downstream="backend:8080", state="success"}
 uniproxy_circuit_breaker_requests_total{downstream="backend:8080", state="failure"}
+
+# HTTP pool metrics
+uniproxy_http_pool_idle_connections
+uniproxy_http_pool_requests_total
 ```
 
 ### Custom Host Header (Ingress/Proxy Routing)
@@ -566,6 +583,22 @@ Returns detailed dependency information from the SDK's `HealthDetails()` API.
 - If the downstream is unreachable, `response` is omitted
 - `depth=0` disables recursive fetch entirely
 - `DEPHEALTH_FETCH_TIMEOUT` controls the timeout for all parallel fetches
+
+### Resilience Settings
+
+Current default settings (configurable via YAML):
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| Graceful shutdown timeout | 30s | Time to wait for active requests |
+| Circuit breaker max failures | 5 | Failures before circuit opens |
+| Circuit breaker timeout | 60s | Time in open state |
+| Circuit breaker half-open limit | 3 | Test requests in half-open |
+| HTTP pool max idle | 100 | Total idle connections |
+| HTTP pool per host | 10 | Idle connections per host |
+| HTTP pool idle timeout | 90s | Idle connection timeout |
+
+See `examples/config.yaml` for configuration examples.
 
 **Status categories:** `ok`, `timeout`, `connection_error`, `dns_error`, `auth_error`, `tls_error`, `unhealthy`, `error`, `unknown`
 

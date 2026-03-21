@@ -26,18 +26,35 @@ import (
 
 // Config is the top-level application configuration. It aggregates all settings
 // required to run uniproxy: application identity, logging, server auth,
-// health-check timing, and the list of dependencies to monitor.
+// health-check timing, resilience settings, and the list of dependencies to monitor.
 type Config struct {
-	Name          string        // application name for metrics labels and status responses
-	Group         string        // logical group for metrics label (e.g. "backend", "infra")
-	ListenAddr    string        // HTTP server listen address (default ":8080")
-	Log           LogConfig     // structured logging configuration
-	Auth          AuthConfig    // server-side (incoming) authentication for endpoints
-	CheckInterval time.Duration // how often the SDK checks each dependency (default 10s)
-	Timeout       time.Duration // global check timeout (0 = SDK default)
-	FetchTimeout  time.Duration // timeout for recursive HTTP fetch in detail mode (default 5s)
-	IsEntry       bool          // when true, isentry=yes label is added to all dependency metrics
-	Dependencies  []Dependency  // list of dependencies to health-check
+	Name            string                // application name for metrics labels and status responses
+	Group           string                // logical group for metrics label (e.g. "backend", "infra")
+	ListenAddr      string                // HTTP server listen address (default ":8080")
+	Log             LogConfig             // structured logging configuration
+	Auth            AuthConfig            // server-side (incoming) authentication for endpoints
+	CheckInterval   time.Duration         // how often the SDK checks each dependency (default 10s)
+	Timeout         time.Duration         // global check timeout (0 = SDK default)
+	FetchTimeout    time.Duration         // timeout for recursive HTTP fetch in detail mode (default 5s)
+	IsEntry         bool                  // when true, isentry=yes label is added to all dependency metrics
+	Dependencies    []Dependency          // list of dependencies to health-check
+	ShutdownTimeout time.Duration         // graceful shutdown timeout (default 30s)
+	CircuitBreaker  *CircuitBreakerConfig // circuit breaker settings for downstream HTTP fetches
+	HTTPTransport   *HTTPTransportConfig  // HTTP client transport settings for connection pooling
+}
+
+// CircuitBreakerConfig configures the circuit breaker pattern for downstream HTTP fetches.
+type CircuitBreakerConfig struct {
+	MaxFailures   int           // number of consecutive failures before opening circuit (default 5)
+	Timeout       time.Duration // time in open state before transitioning to half-open (default 60s)
+	HalfOpenLimit int           // number of requests allowed in half-open state (default 3)
+}
+
+// HTTPTransportConfig configures the HTTP client transport for downstream fetches.
+type HTTPTransportConfig struct {
+	MaxIdleConns        int           // maximum idle connections across all hosts (default 100)
+	MaxIdleConnsPerHost int           // maximum idle connections per host (default 10)
+	IdleConnTimeout     time.Duration // idle connection timeout (default 90s)
 }
 
 // AuthConfig describes server-side (incoming) authentication for protected endpoints.
@@ -301,6 +318,79 @@ func applyEnvOverrides(cfg *Config) error {
 		cfg.IsEntry = b
 	}
 
+	// Graceful shutdown timeout.
+	if v := os.Getenv("SHUTDOWN_TIMEOUT"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return fmt.Errorf("invalid SHUTDOWN_TIMEOUT %q: %w", v, err)
+		}
+		cfg.ShutdownTimeout = d
+	}
+
+	// Circuit breaker settings.
+	if v := os.Getenv("CIRCUIT_BREAKER_MAX_FAILURES"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return fmt.Errorf("invalid CIRCUIT_BREAKER_MAX_FAILURES %q: %w", v, err)
+		}
+		if cfg.CircuitBreaker == nil {
+			cfg.CircuitBreaker = &CircuitBreakerConfig{}
+		}
+		cfg.CircuitBreaker.MaxFailures = n
+	}
+	if v := os.Getenv("CIRCUIT_BREAKER_TIMEOUT"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return fmt.Errorf("invalid CIRCUIT_BREAKER_TIMEOUT %q: %w", v, err)
+		}
+		if cfg.CircuitBreaker == nil {
+			cfg.CircuitBreaker = &CircuitBreakerConfig{}
+		}
+		cfg.CircuitBreaker.Timeout = d
+	}
+	if v := os.Getenv("CIRCUIT_BREAKER_HALF_OPEN_LIMIT"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return fmt.Errorf("invalid CIRCUIT_BREAKER_HALF_OPEN_LIMIT %q: %w", v, err)
+		}
+		if cfg.CircuitBreaker == nil {
+			cfg.CircuitBreaker = &CircuitBreakerConfig{}
+		}
+		cfg.CircuitBreaker.HalfOpenLimit = n
+	}
+
+	// HTTP transport settings.
+	if v := os.Getenv("HTTP_TRANSPORT_MAX_IDLE_CONNS"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return fmt.Errorf("invalid HTTP_TRANSPORT_MAX_IDLE_CONNS %q: %w", v, err)
+		}
+		if cfg.HTTPTransport == nil {
+			cfg.HTTPTransport = &HTTPTransportConfig{}
+		}
+		cfg.HTTPTransport.MaxIdleConns = n
+	}
+	if v := os.Getenv("HTTP_TRANSPORT_MAX_IDLE_CONNS_PER_HOST"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return fmt.Errorf("invalid HTTP_TRANSPORT_MAX_IDLE_CONNS_PER_HOST %q: %w", v, err)
+		}
+		if cfg.HTTPTransport == nil {
+			cfg.HTTPTransport = &HTTPTransportConfig{}
+		}
+		cfg.HTTPTransport.MaxIdleConnsPerHost = n
+	}
+	if v := os.Getenv("HTTP_TRANSPORT_IDLE_CONN_TIMEOUT"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return fmt.Errorf("invalid HTTP_TRANSPORT_IDLE_CONN_TIMEOUT %q: %w", v, err)
+		}
+		if cfg.HTTPTransport == nil {
+			cfg.HTTPTransport = &HTTPTransportConfig{}
+		}
+		cfg.HTTPTransport.IdleConnTimeout = d
+	}
+
 	// Server-side (incoming) auth for status and metrics endpoints.
 	if err := loadServerAuth(cfg); err != nil {
 		return err
@@ -399,6 +489,33 @@ func applyDefaults(cfg *Config) {
 	if cfg.Auth.Method == "" {
 		cfg.Auth.Method = "none"
 	}
+	if cfg.ShutdownTimeout == 0 {
+		cfg.ShutdownTimeout = 30 * time.Second
+	}
+	// Circuit breaker defaults.
+	if cfg.CircuitBreaker != nil {
+		if cfg.CircuitBreaker.MaxFailures == 0 {
+			cfg.CircuitBreaker.MaxFailures = 5
+		}
+		if cfg.CircuitBreaker.Timeout == 0 {
+			cfg.CircuitBreaker.Timeout = 60 * time.Second
+		}
+		if cfg.CircuitBreaker.HalfOpenLimit == 0 {
+			cfg.CircuitBreaker.HalfOpenLimit = 3
+		}
+	}
+	// HTTP transport defaults.
+	if cfg.HTTPTransport != nil {
+		if cfg.HTTPTransport.MaxIdleConns == 0 {
+			cfg.HTTPTransport.MaxIdleConns = 100
+		}
+		if cfg.HTTPTransport.MaxIdleConnsPerHost == 0 {
+			cfg.HTTPTransport.MaxIdleConnsPerHost = 10
+		}
+		if cfg.HTTPTransport.IdleConnTimeout == 0 {
+			cfg.HTTPTransport.IdleConnTimeout = 90 * time.Second
+		}
+	}
 }
 
 // validate checks the Config for correctness after all loading and defaults.
@@ -419,6 +536,34 @@ func validate(cfg *Config) error {
 
 	if cfg.FetchTimeout < 0 {
 		return fmt.Errorf("DEPHEALTH_FETCH_TIMEOUT must be non-negative, got %v", cfg.FetchTimeout)
+	}
+
+	if cfg.ShutdownTimeout < 0 {
+		return fmt.Errorf("SHUTDOWN_TIMEOUT must be non-negative, got %v", cfg.ShutdownTimeout)
+	}
+
+	if cfg.CircuitBreaker != nil {
+		if cfg.CircuitBreaker.MaxFailures < 1 {
+			return fmt.Errorf("CIRCUIT_BREAKER_MAX_FAILURES must be at least 1, got %d", cfg.CircuitBreaker.MaxFailures)
+		}
+		if cfg.CircuitBreaker.Timeout < 0 {
+			return fmt.Errorf("CIRCUIT_BREAKER_TIMEOUT must be non-negative, got %v", cfg.CircuitBreaker.Timeout)
+		}
+		if cfg.CircuitBreaker.HalfOpenLimit < 1 {
+			return fmt.Errorf("CIRCUIT_BREAKER_HALF_OPEN_LIMIT must be at least 1, got %d", cfg.CircuitBreaker.HalfOpenLimit)
+		}
+	}
+
+	if cfg.HTTPTransport != nil {
+		if cfg.HTTPTransport.MaxIdleConns < 0 {
+			return fmt.Errorf("HTTP_TRANSPORT_MAX_IDLE_CONNS must be non-negative, got %d", cfg.HTTPTransport.MaxIdleConns)
+		}
+		if cfg.HTTPTransport.MaxIdleConnsPerHost < 0 {
+			return fmt.Errorf("HTTP_TRANSPORT_MAX_IDLE_CONNS_PER_HOST must be non-negative, got %d", cfg.HTTPTransport.MaxIdleConnsPerHost)
+		}
+		if cfg.HTTPTransport.IdleConnTimeout < 0 {
+			return fmt.Errorf("HTTP_TRANSPORT_IDLE_CONN_TIMEOUT must be non-negative, got %v", cfg.HTTPTransport.IdleConnTimeout)
+		}
 	}
 
 	// Validate server-side auth for both endpoint zones.

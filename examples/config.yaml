@@ -30,6 +30,24 @@ checkInterval: "15s"
 # Timeout for recursive HTTP detail fetch (GET /?detail=true&depth=N).
 fetchTimeout: "3s"
 
+# Graceful shutdown timeout (default: 30s).
+# Time to wait for active requests to complete before force shutdown.
+# shutdownTimeout: "30s"
+
+# Circuit breaker settings for downstream HTTP fetches.
+# Controls resilience when fetching from upstream uniproxy instances.
+# circuitBreaker:
+#   maxFailures: 5        # Open circuit after 5 consecutive failures
+#   timeout: "60s"         # Time in open state before half-open
+#   halfOpenLimit: 3       # Test requests allowed in half-open state
+
+# HTTP client transport settings for connection pooling.
+# Controls how connections are reused for downstream HTTP fetches.
+# httpTransport:
+#   maxIdleConns: 100           # Total idle connections across all hosts
+#   maxIdleConnsPerHost: 10     # Idle connections per single host
+#   idleConnTimeout: "90s"      # Idle connection timeout
+
 # Structured logging configuration.
 log:
   # Output format: "text" or "json".

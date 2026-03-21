@@ -81,6 +81,20 @@ func main() {
 	}
 	slog.Info("dephealth started", "name", cfg.Name)
 
+	// Configure HTTP transport and circuit breaker from settings.
+	if cfg.HTTPTransport != nil || cfg.CircuitBreaker != nil {
+		httpTransport := cfg.HTTPTransport
+		cb := cfg.CircuitBreaker
+		server.ConfigureFetch(
+			httpTransport.MaxIdleConns,
+			httpTransport.MaxIdleConnsPerHost,
+			httpTransport.IdleConnTimeout,
+			uint32(cb.MaxFailures), //nolint:gosec // validated to be positive in config
+			cb.Timeout,
+			uint32(cb.HalfOpenLimit), //nolint:gosec // validated to be positive in config
+		)
+	}
+
 	// Resolve effective auth config for each zone and log it for observability.
 	statusAuth := cfg.Auth.ResolveZone("status")
 	metricsAuth := cfg.Auth.ResolveZone("metrics")
@@ -119,7 +133,10 @@ func main() {
 	// 1. Stop accepting new health check requests.
 	// 2. Shutdown HTTP server, allowing active requests to complete.
 	// 3. If timeout is exceeded, force shutdown.
-	const shutdownTimeout = 30 * time.Second
+	shutdownTimeout := cfg.ShutdownTimeout
+	if shutdownTimeout == 0 {
+		shutdownTimeout = 30 * time.Second
+	}
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer shutdownCancel()
 

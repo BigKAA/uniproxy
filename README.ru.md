@@ -171,6 +171,13 @@ dependencies:
 | `DEPHEALTH_TIMEOUT` | Нет | SDK default | Глобальный таймаут проверки в секундах |
 | `DEPHEALTH_FETCH_TIMEOUT` | Нет | `5` | Таймаут рекурсивного HTTP detail fetch в секундах |
 | `DEPHEALTH_ISENTRY` | Нет | — | Добавить метку `isentry=yes` ко всем метрикам зависимостей (`yes`/`no`) |
+| `SHUTDOWN_TIMEOUT` | Нет | `30` | Graceful shutdown timeout (формат Go duration, напр. `30s`, `1m`) |
+| `CIRCUIT_BREAKER_MAX_FAILURES` | Нет | `5` | Открыть circuit после N последовательных ошибок |
+| `CIRCUIT_BREAKER_TIMEOUT` | Нет | `60s` | Время в открытом состоянии до half-open (Go duration) |
+| `CIRCUIT_BREAKER_HALF_OPEN_LIMIT` | Нет | `3` | Тестовых запросов в состоянии half-open |
+| `HTTP_TRANSPORT_MAX_IDLE_CONNS` | Нет | `100` | Всего idle HTTP соединений для всех хостов |
+| `HTTP_TRANSPORT_MAX_IDLE_CONNS_PER_HOST` | Нет | `10` | Idle соединений на один хост |
+| `HTTP_TRANSPORT_IDLE_CONN_TIMEOUT` | Нет | `90s` | Таймаут idle соединений (Go duration) |
 
 ### Переменные для каждой зависимости
 
@@ -406,6 +413,12 @@ level=info msg="HTTP server stopped gracefully"
 
 Circuit breaker предотвращает каскадные сбои при проблемах с downstream-сервисами.
 
+**HTTP Connection Pooling:**
+- До 100 idle соединений для всех хостов
+- До 10 idle соединений на хост
+- 90-секундный таймаут idle соединений
+- Переиспользование соединений между запросами
+
 **Метрики:**
 ```prometheus
 # Состояние circuit breaker (0=closed, 1=half-open, 2=open)
@@ -414,6 +427,10 @@ uniproxy_circuit_breaker_state{downstream="backend:8080"}
 # Счётчики запросов по результату
 uniproxy_circuit_breaker_requests_total{downstream="backend:8080", state="success"}
 uniproxy_circuit_breaker_requests_total{downstream="backend:8080", state="failure"}
+
+# Метрики HTTP пула
+uniproxy_http_pool_idle_connections
+uniproxy_http_pool_requests_total
 ```
 
 ### Пользовательский Host Header (маршрутизация через Ingress/Proxy)
@@ -566,6 +583,22 @@ docker run -p 8080:8080 \
 - Если downstream недоступен, поле `response` отсутствует
 - `depth=0` полностью отключает рекурсивный fetch
 - `DEPHEALTH_FETCH_TIMEOUT` управляет таймаутом всех параллельных запросов
+
+### Настройки устойчивости
+
+Текущие настройки по умолчанию (настраиваются через YAML):
+
+| Настройка | По умолчанию | Описание |
+|-----------|-------------|---------|
+| Graceful shutdown timeout | 30s | Время ожидания активных запросов |
+| Circuit breaker max failures | 5 | Ошибок до открытия circuit |
+| Circuit breaker timeout | 60s | Время в открытом состоянии |
+| Circuit breaker half-open limit | 3 | Тестовых запросов в half-open |
+| HTTP pool max idle | 100 | Всего idle соединений |
+| HTTP pool per host | 10 | Idle соединений на хост |
+| HTTP pool idle timeout | 90s | Таймаут idle соединений |
+
+Примеры конфигурации: `examples/config.yaml`.
 
 **Категории статусов:** `ok`, `timeout`, `connection_error`, `dns_error`, `auth_error`, `tls_error`, `unhealthy`, `error`, `unknown`
 

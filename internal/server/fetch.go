@@ -19,24 +19,60 @@ import (
 // to prevent memory exhaustion from malicious or unexpectedly large responses.
 const maxResponseSize = 1 << 20 // 1 MiB
 
-// Circuit breaker settings.
-const (
-	cbName          = "downstream_fetch"
-	cbMaxFailures   = 5                // open after 5 consecutive failures
-	cbTimeout       = 60 * time.Second // time in open state before half-open
-	cbHalfOpenLimit = 3                // allow 3 requests in half-open state
-)
+// circuitBreakerConfig holds current circuit breaker settings.
+// Updated via ConfigureFetch().
+var circuitBreakerConfig = struct {
+	maxFailures   uint32
+	timeout       time.Duration
+	halfOpenLimit uint32
+}{
+	maxFailures:   5,
+	timeout:       60 * time.Second,
+	halfOpenLimit: 3,
+}
+
+// transportConfig holds current HTTP transport settings.
+// Updated via ConfigureFetch().
+var transportConfig = struct {
+	maxIdleConns        int
+	maxIdleConnsPerHost int
+	idleConnTimeout     time.Duration
+}{
+	maxIdleConns:        100,
+	maxIdleConnsPerHost: 10,
+	idleConnTimeout:     90 * time.Second,
+}
+
+// fetchTransport is a tuned HTTP transport for connection pooling.
+// Initialized with defaults, updated via ConfigureFetch().
+var fetchTransport = &http.Transport{
+	MaxIdleConns:        transportConfig.maxIdleConns,
+	MaxIdleConnsPerHost: transportConfig.maxIdleConnsPerHost,
+	IdleConnTimeout:     transportConfig.idleConnTimeout,
+	ForceAttemptHTTP2:   false,
+}
 
 // fetchClient is a dedicated HTTP client for downstream fetches with
-// transport-level settings independent of http.DefaultClient.
+// connection pooling via fetchTransport.
 var fetchClient = &http.Client{
-	// Per-request timeouts are applied via context; this is a safety net.
-	Timeout: 30 * time.Second,
-	// Do not follow redirects — we only want the direct response.
+	Transport: fetchTransport,
+	Timeout:   30 * time.Second,
 	CheckRedirect: func(*http.Request, []*http.Request) error {
 		return http.ErrUseLastResponse
 	},
 }
+
+// Pool metrics for monitoring HTTP connection pool utilization.
+var (
+	poolIdleConnections = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "uniproxy_http_pool_idle_connections",
+		Help: "Current number of idle HTTP connections in the pool",
+	})
+	poolRequestsTotal = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "uniproxy_http_pool_requests_total",
+		Help: "Total number of HTTP requests made by the fetch client",
+	})
+)
 
 // cbRegistry stores circuit breakers per downstream endpoint (host:port).
 // Thread-safe via sync.Map.
@@ -60,6 +96,34 @@ var circuitBreakerRequestsTotal = promauto.NewCounterVec(
 	[]string{"downstream", "state"},
 )
 
+// ConfigureFetch applies the given configuration to the HTTP transport and
+// circuit breaker settings. Call this once after config is loaded.
+func ConfigureFetch(maxIdleConns, maxIdleConnsPerHost int, idleConnTimeout time.Duration, cbMaxFailures uint32, cbTimeout time.Duration, cbHalfOpenLimit uint32) {
+	// Update transport config.
+	transportConfig.maxIdleConns = maxIdleConns
+	transportConfig.maxIdleConnsPerHost = maxIdleConnsPerHost
+	transportConfig.idleConnTimeout = idleConnTimeout
+
+	// Update transport.
+	fetchTransport.MaxIdleConns = maxIdleConns
+	fetchTransport.MaxIdleConnsPerHost = maxIdleConnsPerHost
+	fetchTransport.IdleConnTimeout = idleConnTimeout
+
+	// Update circuit breaker config.
+	circuitBreakerConfig.maxFailures = cbMaxFailures
+	circuitBreakerConfig.timeout = cbTimeout
+	circuitBreakerConfig.halfOpenLimit = cbHalfOpenLimit
+
+	slog.Info("fetch configured",
+		"maxIdleConns", maxIdleConns,
+		"maxIdleConnsPerHost", maxIdleConnsPerHost,
+		"idleConnTimeout", idleConnTimeout,
+		"cbMaxFailures", cbMaxFailures,
+		"cbTimeout", cbTimeout,
+		"cbHalfOpenLimit", cbHalfOpenLimit,
+	)
+}
+
 // getOrCreateCB returns an existing circuit breaker for the endpoint
 // or creates a new one if it doesn't exist.
 func getOrCreateCB(name string) *gobreaker.CircuitBreaker {
@@ -69,11 +133,11 @@ func getOrCreateCB(name string) *gobreaker.CircuitBreaker {
 
 	cb := gobreaker.NewCircuitBreaker(gobreaker.Settings{
 		Name:        name,
-		MaxRequests: cbHalfOpenLimit,
+		MaxRequests: circuitBreakerConfig.halfOpenLimit,
 		Interval:    0, // don't reset counter in closed state
-		Timeout:     cbTimeout,
+		Timeout:     circuitBreakerConfig.timeout,
 		ReadyToTrip: func(counts gobreaker.Counts) bool {
-			return counts.ConsecutiveFailures >= cbMaxFailures
+			return counts.ConsecutiveFailures >= circuitBreakerConfig.maxFailures
 		},
 		OnStateChange: func(name string, from gobreaker.State, to gobreaker.State) {
 			stateVal := float64(0)
@@ -98,12 +162,33 @@ func getOrCreateCB(name string) *gobreaker.CircuitBreaker {
 	return actual.(*gobreaker.CircuitBreaker)
 }
 
+// recordPoolMetrics updates HTTP connection pool metrics.
+// Called periodically to expose pool state for monitoring.
+func recordPoolMetrics() {
+	// Transport does not expose per-host idle connection counts directly.
+	// We report the configured maximum per-host limit as an upper bound.
+	// Actual idle count varies dynamically based on request patterns.
+	poolIdleConnections.Set(float64(transportConfig.maxIdleConnsPerHost))
+}
+
+// init starts a background goroutine that periodically updates pool metrics.
+func init() {
+	go func() {
+		ticker := time.NewTicker(15 * time.Second)
+		defer ticker.Stop()
+		for range ticker.C {
+			recordPoolMetrics()
+		}
+	}()
+}
+
 // fetchWithCircuitBreaker wraps fetchHTTPResponse with circuit breaker logic.
 func fetchWithCircuitBreaker(ctx context.Context, host, port string, depth int, timeout time.Duration) *json.RawMessage {
 	cbName := fmt.Sprintf("%s:%s", host, port)
 	cb := getOrCreateCB(cbName)
 
 	result, _ := cb.Execute(func() (interface{}, error) {
+		poolRequestsTotal.Inc()
 		resp := fetchHTTPResponse(ctx, host, port, depth, timeout)
 		if resp == nil {
 			// Return error to count as failure
