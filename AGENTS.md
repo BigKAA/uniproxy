@@ -1,10 +1,10 @@
-# AGENTS.md — Guide for AI Coding Agents
+# CLAUDE.md
 
-This file provides guidance for AI agents working on the uniproxy codebase.
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Project Overview
 
-**uniproxy** is a Go application that health-checks dependencies using the [dephealth SDK](https://github.com/BigKAA/topologymetrics) (`github.com/BigKAA/topologymetrics/sdk-go/dephealth` v0.8.2) and exposes Prometheus metrics. Go 1.25+.
+**uniproxy** is a universal test proxy for dependency health monitoring. It uses the [dephealth SDK](https://github.com/BigKAA/topologymetrics) to health-check configured dependencies (HTTP, gRPC, PostgreSQL, Redis, etc.) and expose Prometheus metrics. Primary use case: testing dephealth-ui topology visualization in Kubernetes environments.
 
 ## Communication Requirements
 
@@ -12,27 +12,114 @@ This file provides guidance for AI agents working on the uniproxy codebase.
 - **English** for all code, comments, and documentation
 - Ask the user if uncertain rather than making assumptions
 
-## Build, Test, and Quality Commands
+## Development Environment
 
-All commands run via Docker (no local tool installation required):
+**CRITICAL**: All development, debugging, and testing MUST be done using Docker containers or Kubernetes.
+
+**CRITICAL**: Docker images must be built as multi-platform for `linux/amd64` and `linux/arm64` using `docker buildx build --platform linux/amd64,linux/arm64`.
+
+### Available Tools
+- `kubectl` — configured for test Kubernetes cluster
+- `helm` — for Helm chart operations
+- `docker` — container operations
+
+### Test Kubernetes Cluster
+- Gateway API installed (no Ingress controller)
+- MetalLB enabled (LoadBalancer services supported)
+- cert-manager with ClusterIssuer: `dev-ca-issuer`
+- Test domains: `test1.kryukov.lan`, `test2.kryukov.lan`, `test3.kryukov.lan` → `192.168.218.180` (Gateway API)
+- Local DNS: `192.168.218.9`
+
+### Container Registries
+
+**Release registry (Yandex Container Registry):**
+- `container-registry.cloud.yandex.net/crpklna5l8v5m7c0ipst` — release images
+- Authentication via `yc` credential helper (configured in `~/.docker/config.json`)
+- Use for all documentation examples and Helm chart defaults
+
+**Development registry (Harbor):**
+- `harbor.kryukov.lan/library` — dev/test images (homelab only)
+- Docker Hub proxy: `harbor.kryukov.lan/docker`
+- MCR proxy: `harbor.kryukov.lan/mcr`
+- Admin credentials: `admin` / `password`
+
+When adding test domains, ask the user to manually add them to `/etc/hosts`.
+
+## Common Commands
+
+### Build & Run Locally (Docker)
 
 ```bash
-# Pull required Docker images (first time)
-make pull
+# Build Docker image
+docker build -t uniproxy:dev .
 
-# Build (compilation)
-make build
+# Run with test configuration
+docker run -p 8080:8080 -p 9090:9090 \
+  -e DEPHEALTH_NAME=test-proxy \
+  -e DEPHEALTH_GROUP=test \
+  -e DEPHEALTH_DEPS="httpbin:http" \
+  -e DEPHEALTH_HTTPBIN_URL="http://httpbin.org" \
+  -e DEPHEALTH_HTTPBIN_CRITICAL="yes" \
+  uniproxy:dev
 
-# Run all tests with race detection
-make test
+# Check health endpoint
+curl http://localhost:8080/
+curl http://localhost:8080/healthz
+
+# Check Prometheus metrics
+curl http://localhost:9090/metrics | grep app_dependency
+```
+
+### Testing
+
+```bash
+# Run all tests
+go test ./...
 
 # Run tests with coverage
-make test-coverage
+go test -cover ./...
 
-# Run a single test
+# Run specific test
 go test -v ./internal/config -run TestLoad
 
-# Static analysis (golangci-lint)
+# Run tests in verbose mode
+go test -v ./...
+```
+
+### Kubernetes Deployment (Helm)
+
+```bash
+# Install instance
+helm install uniproxy-01 ./deploy/helm/uniproxy \
+  -f ./deploy/helm/uniproxy/instances/ns1-homelab.yaml \
+  -n uniproxy-ns1 --create-namespace
+
+# Upgrade instance
+helm upgrade uniproxy-01 ./deploy/helm/uniproxy \
+  -f ./deploy/helm/uniproxy/instances/ns1-homelab.yaml \
+  -n uniproxy-ns1
+
+# Uninstall instance
+helm uninstall uniproxy-01 -n uniproxy-ns1
+
+# Debug template rendering
+helm template uniproxy-01 ./deploy/helm/uniproxy \
+  -f ./deploy/helm/uniproxy/instances/ns1-homelab.yaml
+
+# Check deployed resources
+kubectl get all -n uniproxy-ns1
+kubectl logs -n uniproxy-ns1 deployment/uniproxy-01
+```
+
+### Linting & Code Quality
+
+All quality checks run via Docker (no local tool installation required). See `Makefile` for details.
+
+```bash
+# Pull all required Docker images (first time)
+make pull
+
+# Static analysis (golangci-lint with .golangci.yml config)
 make lint
 
 # Security check (gosec only)
@@ -53,125 +140,226 @@ make helm-lint
 # Dockerfile best practices (hadolint)
 make hadolint
 
-# Run ALL checks
+# Run ALL checks (lint + test + audit + deadcode + helm-lint + hadolint)
 make check-all
+
+# Build / test
+make build
+make test
+make test-coverage
+
+# Cleanup Docker volume caches
+make clean
+
+# Show all available targets
+make help
 ```
 
-## Code Style Guidelines
+## Architecture & Code Structure
 
-### General Principles
-
-- **Language**: Code and comments in English
-- **Discussion**: Russian language
-- **Documentation**: Package-level and public function docs required
-- **Errors**: Always handle errors explicitly; never ignore with `_`
-
-### Imports
-
-- Use `goimports` for import organization (local imports grouped first, then stdlib, then external)
-- Local prefix: `github.com/BigKAA/uniproxy`
-- Format: `goimports -w -local github.com/BigKAA/uniproxy .`
-
-### Naming Conventions
-
-- **Variables**: `camelCase` (e.g., `depName`, `checkInterval`)
-- **Constants**: `PascalCase` for exported, `camelCase` for unexported (e.g., `DefaultPort`, `defaultTimeout`)
-- **Packages**: `snake_case` (e.g., `internal/auth`, `internal/config`)
-- **Functions**: `PascalCase` for exported, `camelCase` for unexported
-- **Interfaces**: `PascalCase` with `er` suffix (e.g., `HealthChecker`)
-
-### Types
-
-- Use pointer types (`*bool`, `*string`) when "not set" is meaningful (nil = default)
-- Prefer `time.Duration` over raw integers for time values
-- Use concrete types over interfaces unless polymorphism needed
-
-### Error Handling
-
-- Return errors with context: `fmt.Errorf("failed to %s: %w", action, originalErr)`
-- Wrap errors at call site, not in helper functions
-- Never use bare `panic()` except for unrecoverable initialization failures
-
-### Formatting
-
-- Run `make fmt` before committing
-- Maximum line length: moderate (let gofmt handle it)
-- Group related const declarations together
-- Use meaningful variable names; avoid single letters except in short loops
-
-### Testing
-
-- Test files: `*_test.go` in same package
-- Test functions: `Test<FunctionName>`
-- Table-driven tests preferred for multiple cases
-- Use `t.Helper()` for test helpers
-- Include race detection: `go test -race`
-
-## Architecture
+### High-Level Architecture
 
 ```
-main.go → internal/config → dephealth SDK → internal/server
-                    ↓
-            internal/logging
-                    ↓
-            internal/auth
+┌─────────────┐
+│   main.go   │  Entry point
+└──────┬──────┘
+       │
+       ├─> internal/config      Parse env vars + YAML config (CONFIG_FILE)
+       │                        Build Config struct with dependencies, auth, logging
+       │
+       ├─> internal/logging     Structured logging setup (text/json, configurable keys)
+       │
+       ├─> internal/auth        Server-side auth middleware (Basic/Bearer/APIKey)
+       │                        Zone-based: status (/), metrics (/metrics)
+       │
+       ├─> dephealth SDK        Initialize health checker with parsed dependencies
+       │   (external)           Start background health checks (interval-based)
+       │                        Register Prometheus metrics (4 metrics)
+       │
+       └─> internal/server      HTTP server (Chi router)
+                                Endpoints: /, /healthz, /readyz, /metrics
+                                Detail mode: /?detail=true&depth=N (recursive HTTP fetch)
+                                Expose SDK metrics via /metrics
 ```
 
-- **main.go**: Entry point, SDK init, server start
-- **internal/config**: Env vars + YAML parsing, validation
-- **internal/logging**: Structured logging setup (slog)
-- **internal/auth**: Zone-based auth middleware
-- **internal/server**: HTTP handlers, recursive fetch
-- **dephealth SDK**: Health checking logic, Prometheus metrics
+### Key Components
 
-## Common Patterns
+**main.go**
+- Loads configuration from environment variables / YAML via `internal/config`
+- Initializes structured logging via `internal/logging`
+- Initializes dephealth SDK with dependency configurations
+- Starts background health checks (SDK handles periodic checking)
+- Starts HTTP server with Chi router and auth middleware
+- Handles graceful shutdown on SIGINT/SIGTERM
 
-### Config Loading
+**internal/auth/**
+- Server-side authentication middleware (Basic Auth, Bearer token, API Key)
+- Zone-based: independent auth settings for status (`/`) and metrics (`/metrics`) endpoints
+- Health probes (`/healthz`, `/readyz`) always open
 
-```go
-cfg, err := config.Load()  // loads from YAML + env vars
-if err != nil {
-    slog.Error("failed to load config", "error", err)
-    os.Exit(1)
-}
+**internal/logging/**
+- Structured logging setup with `slog`
+- Supports text and JSON output formats
+- Configurable JSON keys (`LOG_TIME_KEY`, `LOG_LEVEL_KEY`, `LOG_MESSAGE_KEY`, `LOG_SOURCE_KEY`)
+
+**internal/config/config.go**
+- Parses environment variables and optional YAML config (`CONFIG_FILE`) into `Config` struct
+- Required vars: `DEPHEALTH_NAME`, `DEPHEALTH_GROUP`
+- Optional: `LISTEN_ADDR`, `LOG_FORMAT`, `LOG_LEVEL`, `LOG_TIME_FORMAT`, `LOG_ADD_SOURCE`, `LOG_*_KEY`, `DEPHEALTH_CHECK_INTERVAL`, `DEPHEALTH_TIMEOUT`, `DEPHEALTH_FETCH_TIMEOUT`, `DEPHEALTH_ISENTRY`
+- Per-dependency vars: `DEPHEALTH_<NAME>_URL` or `DEPHEALTH_<NAME>_HOST` + `DEPHEALTH_<NAME>_PORT`, `DEPHEALTH_<NAME>_HOST_HEADER` (HTTP), `DEPHEALTH_<NAME>_GRPC_AUTHORITY` (gRPC)
+- Server auth: `AUTH_METHOD`, `AUTH_USER`, `AUTH_PASS`, `AUTH_TOKEN`, `AUTH_API_KEY` + per-zone overrides (`AUTH_STATUS_*`, `AUTH_METRICS_*`)
+- Dependency auth: `DEPHEALTH_BEARER_TOKEN`, `DEPHEALTH_BASIC_USER/PASS`, `DEPHEALTH_HEADERS`, `DEPHEALTH_METADATA` (global and per-dependency)
+- `_FILE` suffix pattern for secrets (e.g., `DEPHEALTH_BEARER_TOKEN_FILE`)
+- Dependency types: `http`, `redis`, `postgres`, `grpc`, `tcp`, `mysql`, `amqp`, `kafka`, `ldap`
+- YAML config priority: env vars always override YAML values; `DEPHEALTH_DEPS` replaces all YAML dependencies
+
+**internal/server/server.go**
+- HTTP server using `go-chi/chi` router with zone-based auth middleware
+- Routes:
+  - `GET /` — JSON status (name, podName, namespace, health map). Supports `?detail=true` for enriched response with `HealthDetails()` and `?depth=N` for recursive HTTP chain fetch (0–10, default 1). Auth zone: `status`
+  - `GET /healthz` — Liveness probe (always returns 200 OK, no auth)
+  - `GET /readyz` — Readiness probe (always returns 200 OK, no auth)
+  - `GET /metrics` — Prometheus metrics via `promhttp.Handler()`. Auth zone: `metrics`
+
+**External Dependency: dephealth SDK**
+- `github.com/BigKAA/topologymetrics/sdk-go/dephealth` v0.8.2
+- Handles all health checking logic (HTTP, gRPC, database connections, etc.)
+- Exports 4 Prometheus metrics:
+  - `app_dependency_health` (gauge: 1=healthy, 0=unhealthy)
+  - `app_dependency_latency_seconds` (histogram, buckets: 1ms–5s)
+  - `app_dependency_status` (gauge, enum pattern: one status value set to 1, rest to 0; label `status` with values: ok, timeout, connection_error, dns_error, auth_error, tls_error, unhealthy, error)
+  - `app_dependency_status_detail` (gauge, info pattern: always 1 with `detail` label containing human-readable reason)
+- Base labels (all metrics): `name`, `group`, `dependency`, `type`, `host`, `port`, `critical`
+- Optional `isentry` label via `DEPHEALTH_ISENTRY` env var
+- Built-in checker factories registered via `_ "github.com/BigKAA/topologymetrics/sdk-go/dephealth/checks"`
+
+### Configuration Model
+
+uniproxy uses a **declarative configuration** approach with two methods:
+1. **Environment variables** (always works) or **YAML config file** (`CONFIG_FILE`), env vars always override YAML
+2. `internal/config` parses these into structured `Config` (dependencies, auth, logging, etc.)
+3. `main.go` builds `dephealth.Option` slice from config
+4. SDK creates health checkers for each dependency
+5. SDK runs checks in background and updates Prometheus metrics (4 metrics)
+
+Optional global `isentry` label (`DEPHEALTH_ISENTRY=yes`) marks entry-point applications in topology visualization by adding `isentry=yes` to all dependency metrics.
+
+Server-side authentication protects status (`/`) and metrics (`/metrics`) endpoints independently via zone-based auth config. Dependency-side authentication supports bearer tokens, basic auth, custom headers/metadata for HTTP/gRPC dependencies.
+
+This allows **instance-based deployment**: multiple uniproxy instances with different dependency configs can run in the same namespace.
+
+### Deployment Model (Helm)
+
+Two Helm charts available:
+- **Standard chart** (`charts/uniproxy/`): Single-instance per release, full support for Service types, Ingress, Gateway API, server auth, YAML config via ConfigMap
+- **Legacy chart** (`deploy/helm/uniproxy/`): Multi-instance per release, instance-specific config in `instances/<name>.yaml`
+
+Both support instance-based deployment with different dependency configurations per namespace.
+
+## Development Plans
+
+**MANDATORY**: Use standardized development plan template from `.templates/DEVELOPMENT_PLAN_TEMPLATE.md`
+
+- Template: `.templates/DEVELOPMENT_PLAN_TEMPLATE.md` — base template with instructions
+- Example: `.templates/DEVELOPMENT_PLAN_EXAMPLE.md` — filled example
+- Guide: `.templates/TEMPLATE_GUIDE.md` — detailed usage guide
+- Plans storage: `plans/` directory
+
+### Plan Requirements
+- Use semver versioning for plan changes
+- Update "Текущий статус" section when switching tasks
+- Mark checkboxes as work progresses
+- Each phase must fit in AI context window
+- Include explicit dependencies between phases and subtasks
+
+### Workflow
+```bash
+cp .templates/DEVELOPMENT_PLAN_TEMPLATE.md plans/feature_name.md
+# Fill plan, then start development
 ```
-
-### Adding a New Dependency Type
-
-1. Add type to `config.Dependency` struct
-2. Add env var parsing in `parseSingleDep()`
-3. Add SDK option building in `main.go` `buildDependencyOption()`
-4. Add validation in `validateAuth()` if needed
-
-### Adding a New Config Option
-
-1. Add field to `Config` struct in `config.go`
-2. Add env var parsing in `applyEnvOverrides()`
-3. Add default in `applyDefaults()`
-4. Add validation in `validate()`
-
-## Linters Enabled
-
-From `.golangci.yml`: errcheck, govet, staticcheck, unused, ineffassign, misspell, unconvert, unparam, prealloc, gosec
-
-## Important Files
-
-- `go.mod`: Module definition (Go 1.25.8)
-- `Makefile`: All build/lint/test commands
-- `.golangci.yml`: Linter configuration
-- `charts/uniproxy/`: Helm chart
-- `deploy/helm/uniproxy/`: Legacy multi-instance Helm chart
 
 ## Git Workflow
 
-- Follow Conventional Commits: `<type>(<scope>): <subject>`
-- Types: `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `chore`
-- Branch naming: `feature/<description>`, `bugfix/<description>`, etc.
-- Never commit directly to main; use PR or `--no-ff` merge
+**MANDATORY**: Follow [GIT-WORKFLOW.md](./GIT-WORKFLOW.md) for all code changes.
+
+### Branch Naming
+- `feature/<description>` — new functionality
+- `bugfix/<description>` — bug fixes
+- `docs/<description>` — documentation
+- `refactor/<description>` — refactoring
+- `test/<description>` — tests
+- `hotfix/<description>` — critical production fixes
+
+### Commit Message Format (Conventional Commits)
+```
+<type>(<scope>): <subject>
+
+[optional body]
+```
+
+Types: `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `chore`
+
+### Workflow Steps
+1. Create feature branch from `main`
+2. Make changes and commit
+3. Merge to `main` with `--no-ff` or via PR
+4. Delete feature branch
+5. Tag releases with `vX.Y.Z` (semver)
+6. Build and push release image:
+   `docker buildx build --platform linux/amd64,linux/arm64 -t container-registry.cloud.yandex.net/crpklna5l8v5m7c0ipst/uniproxy:vX.Y.Z --push .`
+7. Create GitHub release with `gh release create` — include a **Docker Image** section with pull command:
+   `docker pull container-registry.cloud.yandex.net/crpklna5l8v5m7c0ipst/uniproxy:vX.Y.Z`
+   and supported platforms: `linux/amd64`, `linux/arm64`
+
+### Quick Fixes
+Small fixes (typos, minor tweaks) can be committed directly to `main`.
+
+## Related Projects
+
+- **dephealth SDK**: `~/Projects/personal/topologymetrics/topologymetrics` — local SDK development
+- **dephealth-ui**: Web UI for topology visualization (external)
+
+When working on dephealth SDK integration, the SDK source is available locally for reference.
 
 ## Important Constraints
 
-1. **No local execution**: Always use Docker or Kubernetes
-2. **12-factor app**: All runtime config via environment variables
-3. **SDK responsibility**: dephealth SDK handles health checking logic
-4. **Instance-based model**: Multiple independent instances supported
+1. **No local execution**: Always use Docker or Kubernetes for running/testing
+2. **Env var configuration**: All runtime config via environment variables (12-factor app)
+3. **Health check responsibility**: SDK handles all health checking logic; uniproxy only configures and exposes metrics
+4. **Instance-based model**: Designed for multiple independent instances with different configs
+5. **Conventional Commits**: Strictly follow commit message format
+6. **Russian/English split**: Communication in Russian, code/docs in English
+
+## Debugging Tips
+
+### Check Configuration Parsing
+```bash
+# Run with debug logging
+docker run -e LOG_LEVEL=debug -e DEPHEALTH_NAME=test -e DEPHEALTH_GROUP=test ... uniproxy:dev
+```
+
+### Verify Health Checks
+```bash
+# Watch metrics in real-time
+watch -n 1 'curl -s http://localhost:9090/metrics | grep app_dependency_health'
+```
+
+### Kubernetes Troubleshooting
+```bash
+# Check pod logs
+kubectl logs -f -n <namespace> deployment/<release-name>
+
+# Check environment variables in pod
+kubectl exec -n <namespace> deployment/<release-name> -- env | grep DEPHEALTH
+
+# Port-forward for local access
+kubectl port-forward -n <namespace> deployment/<release-name> 8080:8080 9090:9090
+```
+
+### Common Issues
+- **"DEPHEALTH_NAME is required"**: Missing required env var
+- **"DEPHEALTH_GROUP is required"**: Missing required env var
+- **"unsupported dependency type"**: Check `DEPHEALTH_DEPS` format (name:type)
+- **Health check always DOWN**: Verify connectivity from container/pod to target host
+- **LDAP health always DOWN**: Verify network connectivity to LDAP server, check bind credentials for `simple_bind`, verify StartTLS settings
+- **Metrics not updating**: Check `DEPHEALTH_CHECK_INTERVAL` and SDK logs
