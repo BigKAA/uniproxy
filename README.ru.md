@@ -559,7 +559,8 @@ docker run -p 8080:8080 \
 
 **Как работает рекурсивный fetch:**
 
-- Для HTTP-зависимостей с `depth > 0` uniproxy выполняет HTTP-запрос к зависимости: `http://<host>:<port>/?detail=true&depth=N-1`
+- Для HTTP-зависимостей с `depth > 0` uniproxy выполняет HTTP/HTTPS-запрос к зависимости: `<scheme>://<host>:<port>/?detail=true&depth=N-1`
+- **Автоопределение схемы**: Порт 443 → HTTPS, остальные порты → HTTP (безопасность по умолчанию)
 - Ответ включается в поле `response` зависимости
 - Не-HTTP зависимости никогда не имеют поля `response`
 - Если downstream недоступен, поле `response` отсутствует

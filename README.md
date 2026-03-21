@@ -559,7 +559,8 @@ Returns detailed dependency information from the SDK's `HealthDetails()` API.
 
 **How recursive fetch works:**
 
-- For HTTP-type dependencies with `depth > 0`, uniproxy makes an HTTP request to the dependency at `http://<host>:<port>/?detail=true&depth=N-1`
+- For HTTP-type dependencies with `depth > 0`, uniproxy makes an HTTP/HTTPS request to the dependency at `<scheme>://<host>:<port>/?detail=true&depth=N-1`
+- **Scheme auto-detection**: Port 443 → HTTPS, other ports → HTTP (secure by default)
 - The response is included in the `response` field of the dependency
 - Non-HTTP dependencies never have a `response` field
 - If the downstream is unreachable, `response` is omitted

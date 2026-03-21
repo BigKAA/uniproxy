@@ -122,13 +122,16 @@ func fetchWithCircuitBreaker(ctx context.Context, host, port string, depth int, 
 	return nil
 }
 
-// fetchHTTPResponse makes an HTTP GET request to an HTTP dependency's detail endpoint
+// fetchHTTPResponse makes an HTTP/HTTPS GET request to an HTTP dependency's detail endpoint
 // to fetch its status response for recursive chain visualization.
 //
-// It constructs the URL as http://<host>:<port>/?detail=true&depth=<depth-1>,
-// passing the decremented depth to limit recursion. This enables topology chain
-// visibility: uniproxy A -> uniproxy B -> uniproxy C, each level showing its
-// own dependencies.
+// It constructs the URL as http(s)://<host>:<port>/?detail=true&depth=<depth-1>,
+// passing the decremented depth to limit recursion. The scheme is determined by port:
+// - Port 443 → HTTPS (secure by default)
+// - Other ports → HTTP (for compatibility)
+//
+// This enables topology chain visibility: uniproxy A -> uniproxy B -> uniproxy C,
+// each level showing its own dependencies.
 //
 // Returns the response body as raw JSON (*json.RawMessage) on success, or nil
 // on any error condition:
@@ -147,8 +150,15 @@ func fetchHTTPResponse(ctx context.Context, host, port string, depth int, timeou
 		return nil
 	}
 
+	// Determine scheme based on port.
+	// Port 443 implies HTTPS for downstream uniproxy instances.
+	scheme := "http"
+	if port == "443" {
+		scheme = "https"
+	}
+
 	// Build the detail endpoint URL with decremented depth.
-	url := fmt.Sprintf("http://%s:%s/?detail=true&depth=%d", host, port, depth-1)
+	url := fmt.Sprintf("%s://%s:%s/?detail=true&depth=%d", scheme, host, port, depth-1)
 
 	// Create a child context with per-request timeout.
 	ctx, cancel := context.WithTimeout(ctx, timeout)
