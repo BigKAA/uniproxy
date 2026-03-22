@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.4] - 2026-03-22
+
+### Added
+- **HTTPS server support with TLS termination**
+  - Add configurable TLS certificate and key support for serving HTTPS
+  - Enable secure deployment scenarios for uniproxy instances
+
+### Changed
+- **AI agent documentation naming cleanup**
+  - Rename CLAUDE.md references to AGENTS.md
+- **Release registry documentation**
+  - Update Yandex Container Registry hostname examples to `cr.cloud.yandex.net`
+
+### Fixed
+- N/A
+
+### Security
+- N/A
+
 ## [0.7.3] - 2026-03-21
 
 ### Added
@@ -73,3 +92,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [0.7.3]: https://github.com/BigKAA/uniproxy/compare/v0.7.1...v0.7.3
 [0.7.2]: https://github.com/BigKAA/uniproxy/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/BigKAA/uniproxy/releases/v0.7.1
+
+[0.7.4]: https://github.com/BigKAA/uniproxy/compare/v0.7.3...v0.7.4

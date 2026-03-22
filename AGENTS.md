@@ -33,7 +33,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ### Container Registries
 
 **Release registry (Yandex Container Registry):**
-- `container-registry.cloud.yandex.net/crpklna5l8v5m7c0ipst` — release images
+- `cr.cloud.yandex.net/crpklna5l8v5m7c0ipst` — release images
 - Authentication via `yc` credential helper (configured in `~/.docker/config.json`)
 - Use for all documentation examples and Helm chart defaults
 
