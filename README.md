@@ -428,16 +428,47 @@ Rules:
 3. **Type check**: `HEADERS` is only valid for HTTP; `METADATA` is only valid for gRPC
 4. **No VAR + VAR_FILE**: cannot set both inline value and file reference
 
+#### Custom HTTP Headers
+
+`DEPHEALTH_HEADERS` (global) and `DEPHEALTH_<NAME>_HEADERS` (per-dependency) send arbitrary HTTP headers with every health check request — e.g. API keys (`X-API-Key`), tracing IDs (`X-Request-Id`), content negotiation (`Accept`), or overriding the default `User-Agent`. The value is a JSON object (`{"Key":"Value"}`); apply the same logic to gRPC via `DEPHEALTH_*_METADATA`.
+
+**Environment variable** (value is a JSON string):
+
+```bash
+DEPHEALTH_API_HEADERS='{"X-API-Key":"key-123","X-Request-Id":"health-check"}'
+```
+
+**YAML config** (native map under `auth.headers`):
+
+```yaml
+dependencies:
+  - name: api
+    type: http
+    url: "https://api.example.com/health"
+    auth:
+      headers:
+        X-API-Key: "key-123"
+        X-Request-Id: "health-check"
+```
+
+Notes:
+- HTTP-only. On a per-dependency config, headers completely replace any global `DEPHEALTH_HEADERS`.
+- Counted as an auth method: cannot be combined with bearer token, basic auth, or metadata on the same dependency.
+- In Kubernetes, the YAML form via `CONFIG_FILE` avoids JSON-quoting pitfalls inside Helm values or ConfigMaps.
+
 #### Auth Example
 
 ```bash
 docker run -p 8080:8080 \
   -e DEPHEALTH_NAME=auth-proxy \
   -e DEPHEALTH_GROUP=my-group \
-  -e DEPHEALTH_DEPS="secure-api:http,grpc-svc:grpc" \
+  -e DEPHEALTH_DEPS="secure-api:http,grpc-svc:grpc,third-party-api:http" \
   -e DEPHEALTH_SECURE_API_URL="https://api.example.com" \
   -e DEPHEALTH_SECURE_API_CRITICAL=yes \
   -e DEPHEALTH_SECURE_API_BEARER_TOKEN="eyJhbGciOi..." \
+  -e DEPHEALTH_THIRD_PARTY_API_URL="https://api.example.com/health" \
+  -e DEPHEALTH_THIRD_PARTY_API_CRITICAL=no \
+  -e DEPHEALTH_THIRD_PARTY_API_HEADERS='{"X-API-Key":"key-123","X-Request-Id":"health-check"}' \
   -e DEPHEALTH_GRPC_SVC_HOST=grpc.example.com \
   -e DEPHEALTH_GRPC_SVC_PORT=443 \
   -e DEPHEALTH_GRPC_SVC_CRITICAL=yes \

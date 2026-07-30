@@ -118,6 +118,18 @@ dependencies:
       basicUser: "service"
       basicPass: "password"
 
+  # HTTP dependency with custom request headers (e.g., API key, tracing).
+  # Headers are sent verbatim with every health check request.
+  # Only valid for HTTP dependencies; conflicts with bearerToken/basicAuth.
+  - name: third-party-api
+    type: http
+    url: "https://api.example.com/health"
+    critical: false
+    auth:
+      headers:
+        X-API-Key: "key-123"
+        X-Request-Id: "health-check"
+
   # HTTP dependency behind ingress/gateway — custom Host header.
   # When health-checking a service by IP address behind an ingress controller
   # or reverse proxy, the Host header must match the virtual host routing rule.

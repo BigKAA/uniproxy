@@ -428,16 +428,47 @@ uniproxy поддерживает аутентификацию для HTTP и gR
 3. **Проверка типа**: `HEADERS` только для HTTP; `METADATA` только для gRPC
 4. **Без VAR + VAR_FILE**: нельзя задавать одновременно инлайн-значение и ссылку на файл
 
+#### Произвольные HTTP-заголовки
+
+`DEPHEALTH_HEADERS` (глобально) и `DEPHEALTH_<ИМЯ>_HEADERS` (per-dependency) отправляют произвольные HTTP-заголовки с каждым запросом health check — например, API-ключи (`X-API-Key`), идентификаторы трассировки (`X-Request-Id`), согласование содержимого (`Accept`) или переопределение `User-Agent` по умолчанию. Значение — JSON-объект (`{"Key":"Value"}`); аналогично для gRPC используется `DEPHEALTH_*_METADATA`.
+
+**Переменная окружения** (значение — JSON-строка):
+
+```bash
+DEPHEALTH_API_HEADERS='{"X-API-Key":"key-123","X-Request-Id":"health-check"}'
+```
+
+**YAML-конфиг** (нативный map под `auth.headers`):
+
+```yaml
+dependencies:
+  - name: api
+    type: http
+    url: "https://api.example.com/health"
+    auth:
+      headers:
+        X-API-Key: "key-123"
+        X-Request-Id: "health-check"
+```
+
+Замечания:
+- Только для HTTP. В per-dependency конфигурации headers полностью заменяют глобальные `DEPHEALTH_HEADERS`.
+- Считается методом аутентификации: нельзя совмещать с bearer token, basic auth или metadata в одной зависимости.
+- В Kubernetes YAML-форма через `CONFIG_FILE` избавляет от проблем с экранированием JSON внутри Helm values или ConfigMap.
+
 #### Пример аутентификации
 
 ```bash
 docker run -p 8080:8080 \
   -e DEPHEALTH_NAME=auth-proxy \
   -e DEPHEALTH_GROUP=my-group \
-  -e DEPHEALTH_DEPS="secure-api:http,grpc-svc:grpc" \
+  -e DEPHEALTH_DEPS="secure-api:http,grpc-svc:grpc,third-party-api:http" \
   -e DEPHEALTH_SECURE_API_URL="https://api.example.com" \
   -e DEPHEALTH_SECURE_API_CRITICAL=yes \
   -e DEPHEALTH_SECURE_API_BEARER_TOKEN="eyJhbGciOi..." \
+  -e DEPHEALTH_THIRD_PARTY_API_URL="https://api.example.com/health" \
+  -e DEPHEALTH_THIRD_PARTY_API_CRITICAL=no \
+  -e DEPHEALTH_THIRD_PARTY_API_HEADERS='{"X-API-Key":"key-123","X-Request-Id":"health-check"}' \
   -e DEPHEALTH_GRPC_SVC_HOST=grpc.example.com \
   -e DEPHEALTH_GRPC_SVC_PORT=443 \
   -e DEPHEALTH_GRPC_SVC_CRITICAL=yes \

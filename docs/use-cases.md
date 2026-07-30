@@ -31,7 +31,7 @@ uniproxy works in any environment: Kubernetes, Docker, bare metal, VMs, or any c
 11. [Disaster Recovery Verification](#11-disaster-recovery-verification)
 12. [Health-Checking Services Behind Bearer Auth](#12-health-checking-services-behind-bearer-auth)
 13. [Secure Credentials with Kubernetes Secrets](#13-secure-credentials-with-kubernetes-secrets)
-14. [Custom API Key Headers for Third-Party Services](#14-custom-api-key-headers-for-third-party-services)
+14. [Custom HTTP Headers](#14-custom-http-headers)
 15. [LDAP / Active Directory Connectivity Testing](#15-ldap--active-directory-connectivity-testing)
 
 ---
@@ -1049,11 +1049,11 @@ This renders `valueFrom.secretKeyRef` in the deployment — no inline secrets in
 
 ---
 
-## 14. Custom API Key Headers for Third-Party Services
+## 14. Custom HTTP Headers
 
 ### Problem
 
-Some third-party APIs use custom headers for authentication (e.g., `X-API-Key`, `X-Auth-Token`) instead of standard `Authorization` headers.
+Some third-party APIs use custom headers for authentication (e.g., `X-API-Key`, `X-Auth-Token`) instead of standard `Authorization` headers. Other services require non-auth headers such as tracing IDs, content negotiation, or a specific `User-Agent`.
 
 ### Solution
 
@@ -1077,6 +1077,39 @@ docker run -p 8080:8080 \
   -e DEPHEALTH_DATADOG_HEADERS='{"DD-API-KEY":"abc123","DD-APPLICATION-KEY":"def456"}' \
   uniproxy:0.7.3
 ```
+
+### YAML Configuration
+
+In a config file (`CONFIG_FILE`), headers are a native map under `auth.headers` — no JSON quoting needed. This is the Datadog example from above in YAML form:
+
+```yaml
+dependencies:
+  - name: datadog
+    type: http
+    url: "https://api.datadoghq.com/api/v1/validate"
+    critical: false
+    auth:
+      headers:
+        DD-API-KEY: "abc123"
+        DD-APPLICATION-KEY: "def456"
+```
+
+### Beyond Authentication
+
+Headers are not limited to credentials. Common non-auth uses:
+
+```bash
+# Tracing correlation across services
+-e DEPHEALTH_BACKEND_HEADERS='{"X-Request-Id":"health-check","X-Trace-Id":"uniproxy-01"}'
+
+# Content negotiation / API versioning
+-e DEPHEALTH_API_HEADERS='{"Accept":"application/json","Accept-Version":"v2"}'
+
+# Override the default "dephealth/<version>" User-Agent
+-e DEPHEALTH_LEGACY_HEADERS='{"User-Agent":"my-probe/1.0"}'
+```
+
+> Headers count as an auth method and cannot be combined with `bearerToken`, basic auth, or `metadata` on the same dependency. Use a dedicated dependency for header-based checks.
 
 ### gRPC Metadata
 
