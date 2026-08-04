@@ -94,6 +94,9 @@ dependencies:
   # HTTP dependency with URL.
   - name: backend
     type: http
+    # For HTTP dependencies, only host and port are taken from url;
+    # any path in url is ignored. Set the health endpoint path via healthPath
+    # (default is "/health").
     url: "http://backend.svc:8080"
     critical: true
     healthPath: "/"

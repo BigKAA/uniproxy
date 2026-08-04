@@ -144,6 +144,18 @@ dependencies:
 
 See [examples/config.yaml](./examples/config.yaml) for a full example with all fields.
 
+> [!NOTE]
+> For HTTP dependencies, only the host and port are taken from `url`; **any path in `url` is ignored**. The health endpoint path is set exclusively via `healthPath` (YAML) or `DEPHEALTH_<NAME>_HEALTH_PATH` (env). Default is `/health`.
+>
+> ```yaml
+> dependencies:
+>   - name: api
+>     type: http
+>     url: "http://api.example.com"   # only host and port are used
+>     critical: true
+>     healthPath: "/healthz"           # the actual health endpoint path
+> ```
+
 **Priority rules:**
 - `CONFIG_FILE` env var → load YAML as base config
 - Environment variables → override YAML values
@@ -199,7 +211,7 @@ For each dependency listed in `DEPHEALTH_DEPS`, configure it using environment v
 | `DEPHEALTH_<NAME>_CRITICAL` | Yes | Critical dependency flag (`yes`/`no`) |
 | `DEPHEALTH_<NAME>_CHECK_INTERVAL` | No | Per-dependency check interval (seconds) |
 | `DEPHEALTH_<NAME>_TIMEOUT` | No | Per-dependency timeout (seconds) |
-| `DEPHEALTH_<NAME>_HEALTH_PATH` | No | HTTP health check path |
+| `DEPHEALTH_<NAME>_HEALTH_PATH` | No | HTTP health check path (default `/health`). For HTTP dependencies, any path in `url` is ignored — set the endpoint path via this variable |
 | `DEPHEALTH_<NAME>_TLS` | No | Enable TLS (`yes`/`no`, HTTP/gRPC) |
 | `DEPHEALTH_<NAME>_TLS_SKIP_VERIFY` | No | Skip TLS verification (`yes`/`no`) |
 | `DEPHEALTH_<NAME>_HOST_HEADER` | No | Custom HTTP Host header (also sets TLS SNI). Useful for services behind ingress/proxy |

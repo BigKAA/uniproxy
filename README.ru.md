@@ -144,6 +144,18 @@ dependencies:
 
 Полный пример: [examples/config.yaml](./examples/config.yaml).
 
+> [!NOTE]
+> Для HTTP-зависимостей из `url` используются только host и port; **путь в `url` игнорируется**. Путь health-эндпоинта задаётся исключительно через `healthPath` (YAML) или `DEPHEALTH_<ИМЯ>_HEALTH_PATH` (env). По умолчанию `/health`.
+>
+> ```yaml
+> dependencies:
+>   - name: api
+>     type: http
+>     url: "http://api.example.com"   # используются только host и port
+>     critical: true
+>     healthPath: "/healthz"           # фактический путь health-эндпоинта
+> ```
+
 **Правила приоритетов:**
 - `CONFIG_FILE` env var → загрузка YAML как базовый конфиг
 - Переменные окружения → переопределяют значения из YAML
@@ -199,7 +211,7 @@ dependencies:
 | `DEPHEALTH_<ИМЯ>_CRITICAL` | Да | Критичная зависимость (`yes`/`no`) |
 | `DEPHEALTH_<ИМЯ>_CHECK_INTERVAL` | Нет | Интервал проверки (секунды) |
 | `DEPHEALTH_<ИМЯ>_TIMEOUT` | Нет | Таймаут проверки (секунды) |
-| `DEPHEALTH_<ИМЯ>_HEALTH_PATH` | Нет | Путь для HTTP health check |
+| `DEPHEALTH_<ИМЯ>_HEALTH_PATH` | Нет | Путь HTTP health-эндпоинта (по умолчанию `/health`). Для HTTP-зависимостей путь в `url` игнорируется — задавайте путь эндпоинта через эту переменную |
 | `DEPHEALTH_<ИМЯ>_TLS` | Нет | Включить TLS (`yes`/`no`, HTTP/gRPC) |
 | `DEPHEALTH_<ИМЯ>_TLS_SKIP_VERIFY` | Нет | Пропустить проверку TLS (`yes`/`no`) |
 | `DEPHEALTH_<ИМЯ>_HOST_HEADER` | Нет | Пользовательский HTTP Host header (также устанавливает TLS SNI). Для сервисов за ingress/proxy |
