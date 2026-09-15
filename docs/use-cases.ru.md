@@ -33,6 +33,7 @@ uniproxy работает в любом окружении: Kubernetes, Docker, 
 13. [Безопасное хранение учётных данных в Kubernetes Secrets](#13-безопасное-хранение-учётных-данных-в-kubernetes-secrets)
 14. [Произвольные HTTP-заголовки](#14-произвольные-http-заголовки)
 15. [Тестирование связности с LDAP / Active Directory](#15-тестирование-связности-с-ldap--active-directory)
+16. [Группировка топологии для dephealth-ui](#16-группировка-топологии-для-dephealth-ui)
 
 ---
 
@@ -1195,6 +1196,116 @@ instances:
           existingSecret: "ldap-creds"
           ldapBindPasswordKey: "password"
 ```
+
+---
+
+## 16. Группировка топологии для dephealth-ui
+
+### Проблема
+
+Приложение зависит от сервисов из разных окружений: внутренние сервисы в вашем Kubernetes-namespace, базы данных в выделенном namespace `db`, внешние third-party API. [dephealth-ui](https://github.com/BigKAA/dephealth-ui) строит топологию из метрик `app_dependency_*`, и без меток группировки все зависимости отображаются одним плоским списком. Нужна группировка по namespace и логическим группам.
+
+### Решение
+
+Задать зарезервированные метки `dep_namespace` / `dep_group` — глобальные дефолты на инстанс плюс переопределения на уровне зависимости. uniproxy добавляет их ко всем метрикам `app_dependency_*` зависимости.
+
+### Архитектура
+
+```
+Namespace: production              Namespace: db           Внешние
+┌─────────────────────────┐        ┌────────────────┐      ┌─────────────┐
+│ order-svc (uniproxy)    │        │ postgres :5432 │      │ stripe api  │
+│   ├─▶ payment (apps)    │        │ redis    :6379 │      │ api.stripe  │
+│   ├─▶ orders-db ────────┼────────┼─▶ (db)         │      └─────────────┘
+│   └─▶ stripe ───────────┼───────────────────────────────────────▲ (external)
+└─────────────────────────┘        └────────────────┘
+
+dep_namespace: production (дефолт) | db        | external
+dep_group:    apps (дефолт)        | data      | payments
+```
+
+### Конфигурация (переменные окружения)
+
+```bash
+docker run -p 8080:8080 -p 9090:9090 \
+  -e DEPHEALTH_NAME=order-svc \
+  -e DEPHEALTH_GROUP=production \
+  -e DEPHEALTH_DEPS="payment:http,orders-db:postgres,stripe:http" \
+  -e DEPHEALTH_PAYMENT_URL="http://payment.production.svc:8080" \
+  -e DEPHEALTH_PAYMENT_CRITICAL=yes \
+  -e DEPHEALTH_ORDERS_DB_URL="postgres://user:pass@pg.db.svc:5432/orders" \
+  -e DEPHEALTH_ORDERS_DB_CRITICAL=yes \
+  -e DEPHEALTH_ORDERS_DB_DEP_NAMESPACE=db \
+  -e DEPHEALTH_ORDERS_DB_DEP_GROUP=data \
+  -e DEPHEALTH_STRIPE_URL="https://api.stripe.com" \
+  -e DEPHEALTH_STRIPE_CRITICAL=no \
+  -e DEPHEALTH_STRIPE_DEP_NAMESPACE=external \
+  -e DEPHEALTH_DEP_NAMESPACE=production \
+  -e DEPHEALTH_DEP_GROUP=apps \
+  uniproxy:latest
+```
+
+У `payment` нет per-dependency переопределения, поэтому наследуются глобальные дефолты (`production` / `apps`).
+
+### Конфигурация (YAML)
+
+```yaml
+name: order-svc
+group: production
+
+# Дефолты для всех зависимостей инстанса.
+depNamespace: production
+depGroup: apps
+
+dependencies:
+  - name: payment
+    type: http
+    url: "http://payment.production.svc:8080"
+    critical: true
+  - name: orders-db
+    type: postgres
+    url: "postgres://user:pass@pg.db.svc:5432/orders"
+    critical: true
+    depNamespace: db       # переопределяет глобальный дефолт
+    depGroup: data
+  - name: stripe
+    type: http
+    url: "https://api.stripe.com"
+    critical: false
+    depNamespace: external
+```
+
+### Helm (глобальные дефолты)
+
+```yaml
+config:
+  depNamespace: production
+  depGroup: apps
+```
+
+Per-dependency переопределения в Kubernetes — через `configFile.content` (YAML выше) или `extraEnv`.
+
+### Проверка
+
+```bash
+curl -s http://localhost:9090/metrics | grep app_dependency_health
+```
+
+```
+app_dependency_health{...,dependency="orders-db",type="postgres",...,dep_namespace="db",dep_group="data"} 1
+app_dependency_health{...,dependency="payment",type="http",...,dep_namespace="production",dep_group="apps"} 1
+app_dependency_health{...,dependency="stripe",type="http",...,dep_namespace="external",dep_group="apps"} 1
+```
+
+Укажите dephealth-ui на ваш Prometheus — и топология сгруппируется по `dep_namespace` / `dep_group`.
+
+### Правила
+
+- Значения должны соответствовать `[a-z][a-z0-9-]*` (1–63 символа)
+- Приоритет: per-dependency env > глобальный env > per-dependency YAML > глобальный YAML
+- Для старых версий uniproxy метки можно задать через универсальный механизм SDK: `DEPHEALTH_<ИМЯ>_LABEL_DEP_NAMESPACE` / `DEPHEALTH_<ИМЯ>_LABEL_DEP_GROUP`
+
+Полный справочник: README → [Группировка топологии](../README.ru.md#группировка-топологии).
 
 ---
 

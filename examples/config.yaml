@@ -14,6 +14,12 @@ name: my-proxy
 # Useful for grouping instances by team, environment, or service tier.
 group: my-group
 
+# Topology grouping defaults for dephealth-ui (optional).
+# Applied as dep_namespace / dep_group labels to all dependency metrics.
+# Can be overridden per dependency. Values must match [a-z][a-z0-9-]* (1-63 chars).
+# depNamespace: external
+# depGroup: infra
+
 # HTTP server listen address.
 listenAddr: ":8080"
 
@@ -100,6 +106,9 @@ dependencies:
     url: "http://backend.svc:8080"
     critical: true
     healthPath: "/"
+    # Topology grouping override (optional, overrides the global default):
+    # depNamespace: internal
+    # depGroup: apps
     # Per-dependency check interval and timeout (override global).
     # checkInterval: "5s"
     # timeout: "3s"

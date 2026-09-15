@@ -21,6 +21,12 @@ config:
   name: ""
   # DEPHEALTH_GROUP (required). Logical group for metrics label.
   group: ""
+  # DEPHEALTH_DEP_NAMESPACE — default dep_namespace label for all dependencies
+  # (topology grouping in dephealth-ui). Per-dependency overrides go via
+  # configFile.content (YAML depNamespace/depGroup) or extraEnv.
+  depNamespace: ""
+  # DEPHEALTH_DEP_GROUP — default dep_group label for all dependencies.
+  depGroup: ""
   # LISTEN_ADDR
   listenAddr: ":8080"
   # DEPHEALTH_CHECK_INTERVAL (seconds or Go duration)
