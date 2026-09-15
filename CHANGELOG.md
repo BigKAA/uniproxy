@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-09-15
+
+### Added
+- **Per-dependency `depNamespace` / `depGroup` topology grouping**
+  - Reserved `dep_namespace` / `dep_group` metric labels for dephealth-ui topology grouping
+  - Instance-wide defaults: `DEPHEALTH_DEP_NAMESPACE` / `DEPHEALTH_DEP_GROUP` (env), `depNamespace` / `depGroup` (YAML)
+  - Per-dependency overrides: `DEPHEALTH_<NAME>_DEP_NAMESPACE` / `DEPHEALTH_<NAME>_DEP_GROUP` and YAML dependency fields
+  - Priority: per-dependency env > global env > per-dependency YAML > global YAML; global defaults inherit into dependencies without overrides (including `DEPHEALTH_DEPS`-defined ones)
+  - Values validated against `[a-z][a-z0-9-]*` (1–63 characters)
+  - Helm chart: `config.depNamespace` / `config.depGroup` values for global defaults
+  - Documentation: "Topology Grouping" sections in README (EN/RU) and use case #16 in docs
+- **Documentation**: custom HTTP headers usage, healthPath behavior clarifications
+
+### Changed
+- Helm chart `version` bumped to 0.3.0 (new `config.depNamespace` / `config.depGroup` values)
+
+### Fixed
+- Helm chart `appVersion` now matches the release version (was stale at 0.7.3)
+
+### Security
+- N/A
+
 ## [0.7.4] - 2026-03-22
 
 ### Added
