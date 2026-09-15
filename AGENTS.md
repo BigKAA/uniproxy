@@ -37,12 +37,6 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Authentication via `yc` credential helper (configured in `~/.docker/config.json`)
 - Use for all documentation examples and Helm chart defaults
 
-**Development registry (Harbor):**
-- `harbor.kryukov.lan/library` — dev/test images (homelab only)
-- Docker Hub proxy: `harbor.kryukov.lan/docker`
-- MCR proxy: `harbor.kryukov.lan/mcr`
-- Admin credentials: `admin` / `password`
-
 When adding test domains, ask the user to manually add them to `/etc/hosts`.
 
 ## Common Commands

@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - Helm chart `version` bumped to 0.3.0 (new `config.depNamespace` / `config.depGroup` values)
+- Docker build no longer uses the Harbor registry proxy: base images are pulled from Docker Hub directly (Yandex Container Registry remains the release registry)
 
 ### Fixed
 - Helm chart `appVersion` now matches the release version (was stale at 0.7.3)
