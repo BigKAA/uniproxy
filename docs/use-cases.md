@@ -33,6 +33,7 @@ uniproxy works in any environment: Kubernetes, Docker, bare metal, VMs, or any c
 13. [Secure Credentials with Kubernetes Secrets](#13-secure-credentials-with-kubernetes-secrets)
 14. [Custom HTTP Headers](#14-custom-http-headers)
 15. [LDAP / Active Directory Connectivity Testing](#15-ldap--active-directory-connectivity-testing)
+16. [Topology Grouping for dephealth-ui](#16-topology-grouping-for-dephealth-ui)
 
 ---
 
@@ -1195,6 +1196,116 @@ instances:
           existingSecret: "ldap-creds"
           ldapBindPasswordKey: "password"
 ```
+
+---
+
+## 16. Topology Grouping for dephealth-ui
+
+### Problem
+
+Your application depends on services that belong to different environments: internal services in your Kubernetes namespace, databases in a dedicated `db` namespace, and external third-party APIs. [dephealth-ui](https://github.com/BigKAA/dephealth-ui) builds the topology from `app_dependency_*` metrics, and without grouping labels all dependencies appear as one flat list. You want them grouped by namespace and logical group.
+
+### Solution
+
+Set the reserved `dep_namespace` / `dep_group` labels — instance-wide defaults plus per-dependency overrides. uniproxy adds them to all `app_dependency_*` metrics of the dependency.
+
+### Architecture
+
+```
+Namespace: production              Namespace: db           External
+┌─────────────────────────┐        ┌────────────────┐      ┌─────────────┐
+│ order-svc (uniproxy)    │        │ postgres :5432 │      │ stripe api  │
+│   ├─▶ payment (apps)    │        │ redis    :6379 │      │ api.stripe  │
+│   ├─▶ orders-db ────────┼────────┼─▶ (db)         │      └─────────────┘
+│   └─▶ stripe ───────────┼───────────────────────────────────────▲ (external)
+└─────────────────────────┘        └────────────────┘
+
+dep_namespace: production (default) | db        | external
+dep_group:    apps (default)        | data      | payments
+```
+
+### Configuration (environment variables)
+
+```bash
+docker run -p 8080:8080 -p 9090:9090 \
+  -e DEPHEALTH_NAME=order-svc \
+  -e DEPHEALTH_GROUP=production \
+  -e DEPHEALTH_DEPS="payment:http,orders-db:postgres,stripe:http" \
+  -e DEPHEALTH_PAYMENT_URL="http://payment.production.svc:8080" \
+  -e DEPHEALTH_PAYMENT_CRITICAL=yes \
+  -e DEPHEALTH_ORDERS_DB_URL="postgres://user:pass@pg.db.svc:5432/orders" \
+  -e DEPHEALTH_ORDERS_DB_CRITICAL=yes \
+  -e DEPHEALTH_ORDERS_DB_DEP_NAMESPACE=db \
+  -e DEPHEALTH_ORDERS_DB_DEP_GROUP=data \
+  -e DEPHEALTH_STRIPE_URL="https://api.stripe.com" \
+  -e DEPHEALTH_STRIPE_CRITICAL=no \
+  -e DEPHEALTH_STRIPE_DEP_NAMESPACE=external \
+  -e DEPHEALTH_DEP_NAMESPACE=production \
+  -e DEPHEALTH_DEP_GROUP=apps \
+  uniproxy:latest
+```
+
+`payment` has no per-dependency override, so it inherits the global defaults (`production` / `apps`).
+
+### Configuration (YAML)
+
+```yaml
+name: order-svc
+group: production
+
+# Defaults for all dependencies of this instance.
+depNamespace: production
+depGroup: apps
+
+dependencies:
+  - name: payment
+    type: http
+    url: "http://payment.production.svc:8080"
+    critical: true
+  - name: orders-db
+    type: postgres
+    url: "postgres://user:pass@pg.db.svc:5432/orders"
+    critical: true
+    depNamespace: db       # overrides the global default
+    depGroup: data
+  - name: stripe
+    type: http
+    url: "https://api.stripe.com"
+    critical: false
+    depNamespace: external
+```
+
+### Helm (global defaults)
+
+```yaml
+config:
+  depNamespace: production
+  depGroup: apps
+```
+
+Per-dependency overrides in Kubernetes go via `configFile.content` (YAML above) or `extraEnv`.
+
+### Verify
+
+```bash
+curl -s http://localhost:9090/metrics | grep app_dependency_health
+```
+
+```
+app_dependency_health{...,dependency="orders-db",type="postgres",...,dep_namespace="db",dep_group="data"} 1
+app_dependency_health{...,dependency="payment",type="http",...,dep_namespace="production",dep_group="apps"} 1
+app_dependency_health{...,dependency="stripe",type="http",...,dep_namespace="external",dep_group="apps"} 1
+```
+
+Point dephealth-ui at your Prometheus instance and the topology gets grouped by `dep_namespace` / `dep_group`.
+
+### Rules
+
+- Values must match `[a-z][a-z0-9-]*` (1–63 characters)
+- Priority: per-dependency env > global env > per-dependency YAML > global YAML
+- For older uniproxy versions the labels can also be set via the SDK generic mechanism: `DEPHEALTH_<NAME>_LABEL_DEP_NAMESPACE` / `DEPHEALTH_<NAME>_LABEL_DEP_GROUP`
+
+Full reference: README → [Topology Grouping](../README.md#topology-grouping).
 
 ---
 
