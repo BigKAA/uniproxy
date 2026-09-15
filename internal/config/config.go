@@ -19,10 +19,15 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
 )
+
+// topologyLabelPattern constrains depNamespace/depGroup values. It matches the
+// dependency naming rules of the dephealth SDK (ValidateName).
+var topologyLabelPattern = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 
 // Config is the top-level application configuration. It aggregates all settings
 // required to run uniproxy: application identity, logging, server auth,
@@ -30,6 +35,8 @@ import (
 type Config struct {
 	Name            string                // application name for metrics labels and status responses
 	Group           string                // logical group for metrics label (e.g. "backend", "infra")
+	DepNamespace    string                // default dep_namespace label for all dependencies (topology grouping in dephealth-ui)
+	DepGroup        string                // default dep_group label for all dependencies (topology grouping in dephealth-ui)
 	ListenAddr      string                // HTTP server listen address (default ":8080")
 	Log             LogConfig             // structured logging configuration
 	Auth            AuthConfig            // server-side (incoming) authentication for endpoints
@@ -172,6 +179,11 @@ type Dependency struct {
 	Critical   bool   // if true, dependency failure affects readiness
 	HealthPath string // HTTP-specific: custom health endpoint path
 
+	// Topology grouping labels for dephealth-ui visualization. Empty values
+	// inherit the global Config defaults (resolved at load time).
+	DepNamespace string
+	DepGroup     string
+
 	// Per-dependency timing overrides (0 = use global values).
 	CheckInterval time.Duration
 	Timeout       time.Duration
@@ -270,6 +282,7 @@ func Load() (*Config, error) {
 //   - Core settings: LISTEN_ADDR, DEPHEALTH_NAME, DEPHEALTH_GROUP.
 //   - Timing: DEPHEALTH_CHECK_INTERVAL, DEPHEALTH_TIMEOUT, DEPHEALTH_FETCH_TIMEOUT (in seconds).
 //   - Global entry-point label: DEPHEALTH_ISENTRY.
+//   - Global topology grouping defaults: DEPHEALTH_DEP_NAMESPACE, DEPHEALTH_DEP_GROUP.
 //   - Server-side auth: AUTH_METHOD, AUTH_USER, AUTH_PASS, AUTH_TOKEN, AUTH_API_KEY.
 //   - Dependencies: DEPHEALTH_DEPS (replaces all YAML deps if set).
 //   - Logging: LOG_FORMAT, LOG_LEVEL, LOG_TIME_FORMAT, etc.
@@ -292,6 +305,15 @@ func applyEnvOverrides(cfg *Config) error {
 	// Application group (required, but validated later).
 	if v := os.Getenv("DEPHEALTH_GROUP"); v != "" {
 		cfg.Group = v
+	}
+
+	// Topology grouping defaults inherited by all dependencies without
+	// per-dependency overrides (dephealth-ui grouping labels).
+	if v := os.Getenv("DEPHEALTH_DEP_NAMESPACE"); v != "" {
+		cfg.DepNamespace = v
+	}
+	if v := os.Getenv("DEPHEALTH_DEP_GROUP"); v != "" {
+		cfg.DepGroup = v
 	}
 
 	// Check interval: parsed as floating-point seconds (e.g. "10" = 10s, "0.5" = 500ms).
@@ -420,7 +442,8 @@ func applyEnvOverrides(cfg *Config) error {
 	}
 
 	// Dependencies: DEPHEALTH_DEPS completely replaces any YAML-defined deps.
-	// If not set but YAML deps exist, only per-dep auth env var overlays are applied.
+	// If not set but YAML deps exist, per-dep topology and auth env var overlays
+	// are applied on top of the YAML values.
 	if depsStr := os.Getenv("DEPHEALTH_DEPS"); depsStr != "" {
 		deps, err := parseDeps(depsStr, ga)
 		if err != nil {
@@ -428,9 +451,12 @@ func applyEnvOverrides(cfg *Config) error {
 		}
 		cfg.Dependencies = deps
 	} else if len(cfg.Dependencies) > 0 {
-		// Apply per-dep auth env var overlays to existing (YAML-loaded) deps.
+		// Apply per-dep env var overlays to existing (YAML-loaded) deps.
+		globalNS := os.Getenv("DEPHEALTH_DEP_NAMESPACE")
+		globalGrp := os.Getenv("DEPHEALTH_DEP_GROUP")
 		for i := range cfg.Dependencies {
 			prefix := "DEPHEALTH_" + EnvName(cfg.Dependencies[i].Name) + "_"
+			resolveDepTopologyEnv(&cfg.Dependencies[i], prefix, globalNS, globalGrp)
 			if err := loadDepAuth(&cfg.Dependencies[i], prefix, ga); err != nil {
 				return err
 			}
@@ -603,6 +629,16 @@ func applyDefaults(cfg *Config) {
 	if cfg.ShutdownTimeout == 0 {
 		cfg.ShutdownTimeout = 30 * time.Second
 	}
+	// Topology grouping: dependencies without explicit per-dep values inherit
+	// the global defaults (env > YAML resolution already happened by now).
+	for i := range cfg.Dependencies {
+		if cfg.Dependencies[i].DepNamespace == "" {
+			cfg.Dependencies[i].DepNamespace = cfg.DepNamespace
+		}
+		if cfg.Dependencies[i].DepGroup == "" {
+			cfg.Dependencies[i].DepGroup = cfg.DepGroup
+		}
+	}
 	// Circuit breaker defaults.
 	if cfg.CircuitBreaker != nil {
 		if cfg.CircuitBreaker.MaxFailures == 0 {
@@ -639,6 +675,18 @@ func validate(cfg *Config) error {
 
 	if cfg.Group == "" {
 		return fmt.Errorf("DEPHEALTH_GROUP is required")
+	}
+
+	// Topology grouping labels follow the dependency naming rules.
+	if cfg.DepNamespace != "" {
+		if err := validateTopologyLabel(cfg.DepNamespace); err != nil {
+			return fmt.Errorf("invalid DEPHEALTH_DEP_NAMESPACE/depNamespace %q: %w", cfg.DepNamespace, err)
+		}
+	}
+	if cfg.DepGroup != "" {
+		if err := validateTopologyLabel(cfg.DepGroup); err != nil {
+			return fmt.Errorf("invalid DEPHEALTH_DEP_GROUP/depGroup %q: %w", cfg.DepGroup, err)
+		}
 	}
 
 	if err := validateLogConfig(&cfg.Log); err != nil {
@@ -687,9 +735,20 @@ func validate(cfg *Config) error {
 		return err
 	}
 
-	// Validate each dependency's auth config for consistency.
+	// Validate each dependency's auth config for consistency and topology labels.
 	for i := range cfg.Dependencies {
-		if err := validateAuth(&cfg.Dependencies[i]); err != nil {
+		dep := &cfg.Dependencies[i]
+		if dep.DepNamespace != "" {
+			if err := validateTopologyLabel(dep.DepNamespace); err != nil {
+				return fmt.Errorf("dependency %q: invalid DEP_NAMESPACE/depNamespace %q: %w", dep.Name, dep.DepNamespace, err)
+			}
+		}
+		if dep.DepGroup != "" {
+			if err := validateTopologyLabel(dep.DepGroup); err != nil {
+				return fmt.Errorf("dependency %q: invalid DEP_GROUP/depGroup %q: %w", dep.Name, dep.DepGroup, err)
+			}
+		}
+		if err := validateAuth(dep); err != nil {
 			return err
 		}
 	}
@@ -1045,7 +1104,8 @@ func parseDeps(s string, ga globalAuth) ([]Dependency, error) {
 //   - DEPHEALTH_<NAME>_CRITICAL (yes/no)
 //
 // Optional env vars depend on the dependency type and include health paths,
-// TLS settings, authentication, and type-specific configuration.
+// TLS settings, authentication, topology grouping labels, and type-specific
+// configuration.
 func parseSingleDep(name, depType string, ga globalAuth) (Dependency, error) {
 	prefix := "DEPHEALTH_" + EnvName(name) + "_"
 
@@ -1096,6 +1156,10 @@ func parseSingleDep(name, depType string, ga globalAuth) (Dependency, error) {
 		}
 		dep.Timeout = time.Duration(s * float64(time.Second))
 	}
+
+	// Topology grouping labels (dephealth-ui): override the global defaults.
+	dep.DepNamespace = os.Getenv(prefix + "DEP_NAMESPACE")
+	dep.DepGroup = os.Getenv(prefix + "DEP_GROUP")
 
 	// Type-specific options: each dependency type has its own set of optional env vars.
 	switch depType {
@@ -1286,6 +1350,23 @@ func EnvName(name string) string {
 	return strings.ToUpper(strings.ReplaceAll(name, "-", "_"))
 }
 
+// resolveDepTopologyEnv applies topology grouping env var overlays to a
+// YAML-loaded dependency. Precedence: per-dep env var > global env var >
+// per-dep YAML field. Clearing the YAML value when only the global env var is
+// set lets the global value inherit later in applyDefaults.
+func resolveDepTopologyEnv(dep *Dependency, prefix, globalNS, globalGrp string) {
+	if v := os.Getenv(prefix + "DEP_NAMESPACE"); v != "" {
+		dep.DepNamespace = v
+	} else if globalNS != "" {
+		dep.DepNamespace = ""
+	}
+	if v := os.Getenv(prefix + "DEP_GROUP"); v != "" {
+		dep.DepGroup = v
+	} else if globalGrp != "" {
+		dep.DepGroup = ""
+	}
+}
+
 // parseTLSOptions parses TLS and TLS_SKIP_VERIFY boolean env vars for HTTP and gRPC
 // dependencies. Uses pointer types (*bool) so nil indicates "not set" (use checker default).
 func parseTLSOptions(dep *Dependency, name, prefix string) error {
@@ -1318,4 +1399,16 @@ func parseBool(s string) (bool, error) {
 	default:
 		return false, fmt.Errorf("invalid boolean value %q (expected yes/no/true/false/1/0)", s)
 	}
+}
+
+// validateTopologyLabel checks a depNamespace/depGroup value against the
+// dependency naming rules: [a-z][a-z0-9-]*, 1-63 characters.
+func validateTopologyLabel(value string) error {
+	if len(value) > 63 {
+		return fmt.Errorf("length must be 1-63 characters, got %d", len(value))
+	}
+	if !topologyLabelPattern.MatchString(value) {
+		return fmt.Errorf("must match [a-z][a-z0-9-]*, got %q", value)
+	}
+	return nil
 }

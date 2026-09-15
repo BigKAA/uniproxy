@@ -677,3 +677,44 @@ dependencies:
 		t.Errorf("GRPCAuthority = %q, want empty", dep.GRPCAuthority)
 	}
 }
+
+func TestLoadFromYAML_DepTopologyLabels(t *testing.T) {
+	yamlContent := `
+name: yaml-app
+group: test
+depNamespace: yaml-global-ns
+depGroup: yaml-global-grp
+dependencies:
+  - name: web
+    type: http
+    url: "http://web.svc:8080"
+    critical: true
+    depNamespace: yaml-dep-ns
+    depGroup: yaml-dep-grp
+  - name: db
+    type: postgres
+    url: "postgres://pg.svc:5432/db"
+    critical: true
+`
+	path := writeTestYAML(t, yamlContent)
+	cfg, err := loadFromYAML(path)
+	if err != nil {
+		t.Fatalf("loadFromYAML() error: %v", err)
+	}
+	if cfg.DepNamespace != "yaml-global-ns" || cfg.DepGroup != "yaml-global-grp" {
+		t.Errorf("global topology labels = %q/%q, want yaml-global-ns/yaml-global-grp",
+			cfg.DepNamespace, cfg.DepGroup)
+	}
+
+	// loadFromYAML does not apply inheritance (that happens in Load via applyDefaults).
+	web := cfg.Dependencies[0]
+	if web.DepNamespace != "yaml-dep-ns" || web.DepGroup != "yaml-dep-grp" {
+		t.Errorf("web topology labels = %q/%q, want yaml-dep-ns/yaml-dep-grp",
+			web.DepNamespace, web.DepGroup)
+	}
+	db := cfg.Dependencies[1]
+	if db.DepNamespace != "" || db.DepGroup != "" {
+		t.Errorf("db topology labels = %q/%q, want empty before inheritance",
+			db.DepNamespace, db.DepGroup)
+	}
+}

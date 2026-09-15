@@ -19,6 +19,8 @@ import (
 type yamlConfig struct {
 	Name          string         `yaml:"name"`
 	Group         string         `yaml:"group"`
+	DepNamespace  string         `yaml:"depNamespace"` // default dep_namespace label for all dependencies
+	DepGroup      string         `yaml:"depGroup"`     // default dep_group label for all dependencies
 	ListenAddr    string         `yaml:"listenAddr"`
 	Log           yamlLogConfig  `yaml:"log"`
 	Auth          yamlAuthConfig `yaml:"auth"`
@@ -73,6 +75,8 @@ type yamlDep struct {
 	Host            string       `yaml:"host"`
 	Port            string       `yaml:"port"`
 	Critical        bool         `yaml:"critical"`
+	DepNamespace    string       `yaml:"depNamespace"` // overrides the global depNamespace
+	DepGroup        string       `yaml:"depGroup"`     // overrides the global depGroup
 	HealthPath      string       `yaml:"healthPath"`
 	CheckInterval   string       `yaml:"checkInterval"`
 	Timeout         string       `yaml:"timeout"`
@@ -130,9 +134,11 @@ func loadFromYAML(path string) (*Config, error) {
 // and delegates to specialized converters for sub-structures (auth, dependencies).
 func convertYAMLToConfig(yc *yamlConfig) (*Config, error) {
 	cfg := &Config{
-		Name:       yc.Name,
-		Group:      yc.Group,
-		ListenAddr: yc.ListenAddr,
+		Name:         yc.Name,
+		Group:        yc.Group,
+		DepNamespace: yc.DepNamespace,
+		DepGroup:     yc.DepGroup,
+		ListenAddr:   yc.ListenAddr,
 	}
 
 	// Log config: direct field copy with *bool -> bool conversion.
@@ -196,6 +202,8 @@ func convertYAMLDep(yd *yamlDep) (Dependency, error) {
 		Host:              yd.Host,
 		Port:              yd.Port,
 		Critical:          yd.Critical,
+		DepNamespace:      yd.DepNamespace,
+		DepGroup:          yd.DepGroup,
 		HealthPath:        yd.HealthPath,
 		TLS:               yd.TLS,
 		TLSSkipVerify:     yd.TLSSkipVerify,

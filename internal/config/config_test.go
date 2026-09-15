@@ -2646,3 +2646,234 @@ dependencies:
 		t.Errorf("grpcDep.GRPCAuthority = %q, want %q", grpcDep.GRPCAuthority, "myservice.example.com")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Topology grouping labels (depNamespace / depGroup)
+// ---------------------------------------------------------------------------
+
+func TestLoad_DepTopologyLabels_EnvOnly(t *testing.T) {
+	setEnvs(t, map[string]string{
+		"DEPHEALTH_NAME":              "test-app",
+		"DEPHEALTH_GROUP":             "test",
+		"DEPHEALTH_DEP_NAMESPACE":     "external",
+		"DEPHEALTH_DEP_GROUP":         "infra",
+		"DEPHEALTH_DEPS":              "svc:http,db:postgres",
+		"DEPHEALTH_SVC_URL":           "http://svc.svc:8080",
+		"DEPHEALTH_SVC_CRITICAL":      "yes",
+		"DEPHEALTH_SVC_DEP_NAMESPACE": "inner",
+		"DEPHEALTH_DB_URL":            "postgres://user:pass@pg.svc:5432/db",
+		"DEPHEALTH_DB_CRITICAL":       "yes",
+	})
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.DepNamespace != "external" || cfg.DepGroup != "infra" {
+		t.Errorf("global topology labels = %q/%q, want external/infra", cfg.DepNamespace, cfg.DepGroup)
+	}
+
+	svc := cfg.Dependencies[0]
+	if svc.DepNamespace != "inner" {
+		t.Errorf("svc.DepNamespace = %q, want %q (per-dep env overrides global)", svc.DepNamespace, "inner")
+	}
+	if svc.DepGroup != "infra" {
+		t.Errorf("svc.DepGroup = %q, want %q (inherited from global)", svc.DepGroup, "infra")
+	}
+
+	db := cfg.Dependencies[1]
+	if db.DepNamespace != "external" || db.DepGroup != "infra" {
+		t.Errorf("db topology labels = %q/%q, want external/infra (inherited)", db.DepNamespace, db.DepGroup)
+	}
+}
+
+func TestLoad_DepTopologyLabels_NoGlobals(t *testing.T) {
+	setEnvs(t, map[string]string{
+		"DEPHEALTH_NAME":         "test-app",
+		"DEPHEALTH_GROUP":        "test",
+		"DEPHEALTH_DEPS":         "svc:http",
+		"DEPHEALTH_SVC_URL":      "http://svc.svc:8080",
+		"DEPHEALTH_SVC_CRITICAL": "yes",
+	})
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.DepNamespace != "" || cfg.DepGroup != "" {
+		t.Errorf("global topology labels = %q/%q, want empty", cfg.DepNamespace, cfg.DepGroup)
+	}
+	dep := cfg.Dependencies[0]
+	if dep.DepNamespace != "" || dep.DepGroup != "" {
+		t.Errorf("dep topology labels = %q/%q, want empty", dep.DepNamespace, dep.DepGroup)
+	}
+}
+
+func TestLoad_DepTopologyLabels_YAMLAndEnvPrecedence(t *testing.T) {
+	yamlContent := `
+name: yaml-app
+group: test
+depNamespace: yaml-global-ns
+depGroup: yaml-global-grp
+dependencies:
+  - name: web
+    type: http
+    url: "http://web.svc:8080"
+    critical: true
+    depNamespace: yaml-dep-ns
+  - name: db
+    type: postgres
+    url: "postgres://pg.svc:5432/db"
+    critical: true
+`
+	path := writeTestYAML(t, yamlContent)
+	setEnvs(t, map[string]string{
+		"CONFIG_FILE":                 path,
+		"DEPHEALTH_DEP_NAMESPACE":     "env-global-ns",
+		"DEPHEALTH_WEB_DEP_NAMESPACE": "env-dep-ns",
+		"DEPHEALTH_DB_DEP_GROUP":      "env-dep-grp",
+	})
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.DepNamespace != "env-global-ns" {
+		t.Errorf("cfg.DepNamespace = %q, want env-global-ns (env overrides YAML)", cfg.DepNamespace)
+	}
+	if cfg.DepGroup != "yaml-global-grp" {
+		t.Errorf("cfg.DepGroup = %q, want yaml-global-grp (YAML, no env override)", cfg.DepGroup)
+	}
+
+	web := cfg.Dependencies[0]
+	if web.DepNamespace != "env-dep-ns" {
+		t.Errorf("web.DepNamespace = %q, want env-dep-ns (per-dep env wins)", web.DepNamespace)
+	}
+	if web.DepGroup != "yaml-global-grp" {
+		t.Errorf("web.DepGroup = %q, want yaml-global-grp (global YAML inherited)", web.DepGroup)
+	}
+
+	db := cfg.Dependencies[1]
+	if db.DepNamespace != "env-global-ns" {
+		t.Errorf("db.DepNamespace = %q, want env-global-ns (global env > per-dep YAML absence)", db.DepNamespace)
+	}
+	if db.DepGroup != "env-dep-grp" {
+		t.Errorf("db.DepGroup = %q, want env-dep-grp (per-dep env wins)", db.DepGroup)
+	}
+}
+
+func TestLoad_DepTopologyLabels_GlobalEnvBeatsPerDepYAML(t *testing.T) {
+	yamlContent := `
+name: yaml-app
+group: test
+depNamespace: yaml-global-ns
+dependencies:
+  - name: web
+    type: http
+    url: "http://web.svc:8080"
+    critical: true
+    depNamespace: yaml-dep-ns
+    depGroup: yaml-dep-grp
+`
+	path := writeTestYAML(t, yamlContent)
+	setEnvs(t, map[string]string{
+		"CONFIG_FILE":             path,
+		"DEPHEALTH_DEP_NAMESPACE": "env-global-ns",
+		"DEPHEALTH_DEP_GROUP":     "env-global-grp",
+	})
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	web := cfg.Dependencies[0]
+	if web.DepNamespace != "env-global-ns" {
+		t.Errorf("web.DepNamespace = %q, want env-global-ns (global env > per-dep YAML)", web.DepNamespace)
+	}
+	if web.DepGroup != "env-global-grp" {
+		t.Errorf("web.DepGroup = %q, want env-global-grp (global env > per-dep YAML)", web.DepGroup)
+	}
+}
+
+func TestLoad_DepTopologyLabels_DEPSKeepsGlobalInheritance(t *testing.T) {
+	yamlContent := `
+name: yaml-app
+group: test
+depNamespace: yaml-global-ns
+dependencies:
+  - name: web
+    type: http
+    url: "http://web.svc:8080"
+    critical: true
+`
+	path := writeTestYAML(t, yamlContent)
+	setEnvs(t, map[string]string{
+		"CONFIG_FILE":            path,
+		"DEPHEALTH_DEPS":         "api:http",
+		"DEPHEALTH_API_URL":      "http://api.svc:8080",
+		"DEPHEALTH_API_CRITICAL": "yes",
+	})
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(cfg.Dependencies) != 1 || cfg.Dependencies[0].Name != "api" {
+		t.Fatalf("deps = %+v, want single env-defined dep api", cfg.Dependencies)
+	}
+	if cfg.Dependencies[0].DepNamespace != "yaml-global-ns" {
+		t.Errorf("api.DepNamespace = %q, want yaml-global-ns (YAML global applies to env deps)",
+			cfg.Dependencies[0].DepNamespace)
+	}
+}
+
+func TestLoad_DepTopologyLabels_InvalidGlobal(t *testing.T) {
+	setEnvs(t, map[string]string{
+		"DEPHEALTH_NAME":          "test-app",
+		"DEPHEALTH_GROUP":         "test",
+		"DEPHEALTH_DEP_NAMESPACE": "Invalid_NS",
+	})
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected error for invalid DEPHEALTH_DEP_NAMESPACE")
+	}
+	if !strings.Contains(err.Error(), "DEPHEALTH_DEP_NAMESPACE") {
+		t.Errorf("error %q should mention DEPHEALTH_DEP_NAMESPACE", err.Error())
+	}
+}
+
+func TestLoad_DepTopologyLabels_InvalidPerDep(t *testing.T) {
+	setEnvs(t, map[string]string{
+		"DEPHEALTH_NAME":          "test-app",
+		"DEPHEALTH_GROUP":         "test",
+		"DEPHEALTH_DEPS":          "svc:http",
+		"DEPHEALTH_SVC_URL":       "http://svc.svc:8080",
+		"DEPHEALTH_SVC_CRITICAL":  "yes",
+		"DEPHEALTH_SVC_DEP_GROUP": "bad_group",
+	})
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected error for invalid DEPHEALTH_SVC_DEP_GROUP")
+	}
+	if !strings.Contains(err.Error(), "svc") {
+		t.Errorf("error %q should mention dependency name", err.Error())
+	}
+}
+
+func TestLoad_DepTopologyLabels_TooLong(t *testing.T) {
+	setEnvs(t, map[string]string{
+		"DEPHEALTH_NAME":         "test-app",
+		"DEPHEALTH_GROUP":        "test",
+		"DEPHEALTH_DEPS":         "svc:http",
+		"DEPHEALTH_SVC_URL":      "http://svc.svc:8080",
+		"DEPHEALTH_SVC_CRITICAL": "yes",
+		"DEPHEALTH_DEP_GROUP":    strings.Repeat("a", 64),
+	})
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected error for 64-character depGroup")
+	}
+}

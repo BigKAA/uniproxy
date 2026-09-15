@@ -42,6 +42,14 @@ spec:
               value: {{ default (include "uniproxy.fullname" .) .Values.config.name | quote }}
             - name: DEPHEALTH_GROUP
               value: {{ .Values.config.group | quote }}
+            {{- if .Values.config.depNamespace }}
+            - name: DEPHEALTH_DEP_NAMESPACE
+              value: {{ .Values.config.depNamespace | quote }}
+            {{- end }}
+            {{- if .Values.config.depGroup }}
+            - name: DEPHEALTH_DEP_GROUP
+              value: {{ .Values.config.depGroup | quote }}
+            {{- end }}
             - name: LISTEN_ADDR
               value: {{ .Values.config.listenAddr | quote }}
             - name: DEPHEALTH_CHECK_INTERVAL

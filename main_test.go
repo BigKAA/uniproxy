@@ -15,11 +15,15 @@ import (
 	"crypto/x509"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/BigKAA/topologymetrics/sdk-go/dephealth"
+	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/BigKAA/uniproxy/internal/config"
 )
@@ -574,5 +578,90 @@ func TestHTTPS_GracefulShutdown(t *testing.T) {
 		// success
 	case <-time.After(5 * time.Second):
 		t.Error("graceful shutdown timed out")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Topology grouping labels (dep_namespace / dep_group)
+// ---------------------------------------------------------------------------
+
+// TestBuildDependencyOption_DepTopologyLabels verifies that per-dependency
+// depNamespace/depGroup values reach the SDK and appear as dep_namespace and
+// dep_group labels on the app_dependency_health metric after the first check.
+func TestBuildDependencyOption_DepTopologyLabels(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	host, port, err := net.SplitHostPort(srv.Listener.Addr().String())
+	if err != nil {
+		t.Fatalf("failed to split test server address: %v", err)
+	}
+
+	dep := config.Dependency{
+		Name:         "topo-svc",
+		Type:         "http",
+		Host:         host,
+		Port:         port,
+		Critical:     true,
+		HealthPath:   "/",
+		DepNamespace: "external",
+		DepGroup:     "infra",
+	}
+
+	opt, err := buildDependencyOption(dep, false)
+	if err != nil {
+		t.Fatalf("buildDependencyOption() error: %v", err)
+	}
+
+	reg := prometheus.NewRegistry()
+	dh, err := dephealth.New("topo-test", "test", dephealth.WithRegisterer(reg), opt)
+	if err != nil {
+		t.Fatalf("dephealth.New() error: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := dh.Start(ctx); err != nil {
+		t.Fatalf("Start() error: %v", err)
+	}
+	defer dh.Stop()
+
+	// The first check runs after the SDK default initial delay (5s); poll the
+	// registry until the metric sample with our labels shows up.
+	deadline := time.Now().Add(15 * time.Second)
+	for {
+		found := false
+		mfs, err := reg.Gather()
+		if err != nil {
+			t.Fatalf("Gather() error: %v", err)
+		}
+		for _, mf := range mfs {
+			if mf.GetName() != "app_dependency_health" {
+				continue
+			}
+			for _, m := range mf.GetMetric() {
+				var ns, grp string
+				for _, lp := range m.GetLabel() {
+					switch lp.GetName() {
+					case "dep_namespace":
+						ns = lp.GetValue()
+					case "dep_group":
+						grp = lp.GetValue()
+					}
+				}
+				if ns == "external" && grp == "infra" {
+					found = true
+				}
+			}
+		}
+		if found {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("app_dependency_health sample with dep_namespace=external and dep_group=infra not found within 15s")
+		}
+		time.Sleep(250 * time.Millisecond)
 	}
 }

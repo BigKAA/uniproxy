@@ -115,6 +115,8 @@ docker run -p 8080:8080 \
 ```yaml
 name: my-proxy
 group: my-group
+depNamespace: external   # dep_namespace по умолчанию для всех зависимостей (опционально)
+depGroup: infra          # dep_group по умолчанию для всех зависимостей (опционально)
 listenAddr: ":8080"
 checkInterval: "15s"
 fetchTimeout: "3s"
@@ -135,6 +137,7 @@ dependencies:
     url: "http://backend.svc:8080"
     critical: true
     healthPath: "/"
+    depNamespace: internal   # переопределяет глобальный дефолт
   - name: cache
     type: redis
     host: redis.svc
@@ -169,6 +172,8 @@ dependencies:
 | `CONFIG_FILE` | Нет | — | Путь к YAML-файлу конфигурации |
 | `DEPHEALTH_NAME` | Да | — | Имя приложения (используется в метриках и ответах) |
 | `DEPHEALTH_GROUP` | Да | — | Логическая группа для метки Prometheus |
+| `DEPHEALTH_DEP_NAMESPACE` | Нет | — | Метка `dep_namespace` по умолчанию для всех зависимостей (группировка топологии в dephealth-ui) |
+| `DEPHEALTH_DEP_GROUP` | Нет | — | Метка `dep_group` по умолчанию для всех зависимостей (группировка топологии в dephealth-ui) |
 | `DEPHEALTH_DEPS` | Нет | — | Список зависимостей через запятую: `имя1:тип1,имя2:тип2` |
 | `LISTEN_ADDR` | Нет | `:8080` | Адрес HTTP-сервера |
 | `LOG_FORMAT` | Нет | `text` | Формат вывода логов: `text` или `json` |
@@ -209,6 +214,8 @@ dependencies:
 | `DEPHEALTH_<ИМЯ>_HOST` | Да* | Целевой хост (альтернатива URL) |
 | `DEPHEALTH_<ИМЯ>_PORT` | Да* | Целевой порт (требуется вместе с HOST) |
 | `DEPHEALTH_<ИМЯ>_CRITICAL` | Да | Критичная зависимость (`yes`/`no`) |
+| `DEPHEALTH_<ИМЯ>_DEP_NAMESPACE` | Нет | Переопределение топологической метки `dep_namespace` (см. [Группировка топологии](#группировка-топологии)) |
+| `DEPHEALTH_<ИМЯ>_DEP_GROUP` | Нет | Переопределение топологической метки `dep_group` (см. [Группировка топологии](#группировка-топологии)) |
 | `DEPHEALTH_<ИМЯ>_CHECK_INTERVAL` | Нет | Интервал проверки (секунды) |
 | `DEPHEALTH_<ИМЯ>_TIMEOUT` | Нет | Таймаут проверки (секунды) |
 | `DEPHEALTH_<ИМЯ>_HEALTH_PATH` | Нет | Путь HTTP health-эндпоинта (по умолчанию `/health`). Для HTTP-зависимостей путь в `url` игнорируется — задавайте путь эндпоинта через эту переменную |
@@ -232,6 +239,34 @@ dependencies:
 | `DEPHEALTH_<ИМЯ>_LDAP_TLS_SKIP_VERIFY` | Нет | Пропустить проверку TLS-сертификата (`yes`/`no`) |
 
 *Требуется либо `URL`, либо `HOST` + `PORT`.
+
+### Группировка топологии
+
+[dephealth-ui](https://github.com/BigKAA/dephealth-ui) группирует endpoints топологии по зарезервированным меткам `dep_namespace` и `dep_group`. В uniproxy это first-class конфигурация: глобальные дефолты на инстанс плюс переопределения на уровне зависимости.
+
+```bash
+# Глобальные дефолты для всех зависимостей инстанса:
+DEPHEALTH_DEP_NAMESPACE=external
+DEPHEALTH_DEP_GROUP=infra
+
+# Переопределение для отдельной зависимости:
+DEPHEALTH_DB_DEP_NAMESPACE=db
+DEPHEALTH_DB_DEP_GROUP=data
+```
+
+Те же поля доступны в YAML (`depNamespace` / `depGroup`, глобальные и per-dependency) и в Helm (`config.depNamespace` / `config.depGroup` для глобальных дефолтов).
+
+Значения должны соответствовать `[a-z][a-z0-9-]*` (1–63 символа). Когда заданы, все метрики `app_dependency_*` зависимости получают метки `dep_namespace` / `dep_group`.
+
+**Приоритет** (побеждает более специфичный источник; env всегда перекрывает YAML):
+
+1. `DEPHEALTH_<ИМЯ>_DEP_NAMESPACE` / `DEPHEALTH_<ИМЯ>_DEP_GROUP` (per-dependency env)
+2. `DEPHEALTH_DEP_NAMESPACE` / `DEPHEALTH_DEP_GROUP` (глобальный env)
+3. Поля `depNamespace` / `depGroup` конкретной зависимости в YAML
+4. Глобальные поля `depNamespace` / `depGroup` в YAML
+
+> [!NOTE]
+> Для деплоев на старых версиях uniproxy те же метки можно задать через универсальный механизм dephealth SDK: `DEPHEALTH_<ИМЯ>_LABEL_DEP_NAMESPACE` / `DEPHEALTH_<ИМЯ>_LABEL_DEP_GROUP`. При одновременной установке побеждают first-class переменные.
 
 ### Серверная аутентификация
 
@@ -872,6 +907,8 @@ gateway:
 | `image.tag` | `""` (appVersion) | Тег образа |
 | `config.name` | `""` (имя релиза) | `DEPHEALTH_NAME` — имя приложения |
 | `config.group` | `""` | `DEPHEALTH_GROUP` — логическая группа |
+| `config.depNamespace` | `""` | `DEPHEALTH_DEP_NAMESPACE` — метка `dep_namespace` по умолчанию |
+| `config.depGroup` | `""` | `DEPHEALTH_DEP_GROUP` — метка `dep_group` по умолчанию |
 | `config.listenAddr` | `":8080"` | `LISTEN_ADDR` |
 | `config.checkInterval` | `"10"` | `DEPHEALTH_CHECK_INTERVAL` |
 | `config.timeout` | `""` | `DEPHEALTH_TIMEOUT` |
@@ -930,6 +967,8 @@ uniproxy предназначен для работы с [dephealth-ui](https://
 2. Настройте Prometheus для сбора метрик с подов uniproxy
 3. Укажите dephealth-ui на ваш экземпляр Prometheus
 4. Используйте `?detail=true&depth=N` для глубокой инспекции цепочек зависимостей
+
+Для группировки топологии по namespace/подгруппам задавайте метки `dep_namespace` / `dep_group` через конфигурацию [Группировка топологии](#группировка-топологии).
 
 ## Лицензия
 

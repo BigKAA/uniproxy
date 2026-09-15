@@ -275,6 +275,7 @@ func buildOptions(cfg *config.Config, logger *slog.Logger) ([]dephealth.Option, 
 //   - Connection source: URL-based or explicit host+port.
 //   - Critical flag: marks the dependency as critical for readiness.
 //   - IsEntry label: when isEntry is true, adds isentry=yes label for topology visualization.
+//   - Topology grouping labels: dep_namespace/dep_group for dephealth-ui grouping.
 //   - Per-dependency timing overrides (check interval, timeout).
 //   - Type-specific options: TLS, health paths, service names, queries, passwords, LDAP config.
 //   - Type-specific authentication: bearer tokens, basic auth, custom headers/metadata.
@@ -296,6 +297,15 @@ func buildDependencyOption(dep config.Dependency, isEntry bool) (dephealth.Optio
 	// Add isentry label for entry-point applications in topology visualization.
 	if isEntry {
 		depOpts = append(depOpts, dephealth.WithLabel("isentry", "yes"))
+	}
+
+	// Topology grouping labels for dephealth-ui visualization. Empty values
+	// were already resolved to the global defaults at config load time.
+	if dep.DepNamespace != "" {
+		depOpts = append(depOpts, dephealth.WithLabel("dep_namespace", dep.DepNamespace))
+	}
+	if dep.DepGroup != "" {
+		depOpts = append(depOpts, dephealth.WithLabel("dep_group", dep.DepGroup))
 	}
 
 	// Per-dependency timing overrides; 0 means inherit from global settings.

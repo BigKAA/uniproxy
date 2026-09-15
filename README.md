@@ -115,6 +115,8 @@ Example YAML file:
 ```yaml
 name: my-proxy
 group: my-group
+depNamespace: external   # default dep_namespace for all dependencies (optional)
+depGroup: infra          # default dep_group for all dependencies (optional)
 listenAddr: ":8080"
 checkInterval: "15s"
 fetchTimeout: "3s"
@@ -135,6 +137,7 @@ dependencies:
     url: "http://backend.svc:8080"
     critical: true
     healthPath: "/"
+    depNamespace: internal   # overrides the global default
   - name: cache
     type: redis
     host: redis.svc
@@ -169,6 +172,8 @@ See [examples/config.yaml](./examples/config.yaml) for a full example with all f
 | `CONFIG_FILE` | No | — | Path to YAML configuration file |
 | `DEPHEALTH_NAME` | Yes | — | Application name (used in metrics and status response) |
 | `DEPHEALTH_GROUP` | Yes | — | Logical group for Prometheus metrics label |
+| `DEPHEALTH_DEP_NAMESPACE` | No | — | Default `dep_namespace` label for all dependencies (topology grouping in dephealth-ui) |
+| `DEPHEALTH_DEP_GROUP` | No | — | Default `dep_group` label for all dependencies (topology grouping in dephealth-ui) |
 | `DEPHEALTH_DEPS` | No | — | Comma-separated dependency list: `name1:type1,name2:type2` |
 | `LISTEN_ADDR` | No | `:8080` | HTTP server listen address |
 | `LOG_FORMAT` | No | `text` | Log output format: `text` or `json` |
@@ -209,6 +214,8 @@ For each dependency listed in `DEPHEALTH_DEPS`, configure it using environment v
 | `DEPHEALTH_<NAME>_HOST` | Yes* | Target host (alternative to URL) |
 | `DEPHEALTH_<NAME>_PORT` | Yes* | Target port (required with HOST) |
 | `DEPHEALTH_<NAME>_CRITICAL` | Yes | Critical dependency flag (`yes`/`no`) |
+| `DEPHEALTH_<NAME>_DEP_NAMESPACE` | No | `dep_namespace` topology label override (see [Topology Grouping](#topology-grouping)) |
+| `DEPHEALTH_<NAME>_DEP_GROUP` | No | `dep_group` topology label override (see [Topology Grouping](#topology-grouping)) |
 | `DEPHEALTH_<NAME>_CHECK_INTERVAL` | No | Per-dependency check interval (seconds) |
 | `DEPHEALTH_<NAME>_TIMEOUT` | No | Per-dependency timeout (seconds) |
 | `DEPHEALTH_<NAME>_HEALTH_PATH` | No | HTTP health check path (default `/health`). For HTTP dependencies, any path in `url` is ignored — set the endpoint path via this variable |
@@ -232,6 +239,34 @@ For each dependency listed in `DEPHEALTH_DEPS`, configure it using environment v
 | `DEPHEALTH_<NAME>_LDAP_TLS_SKIP_VERIFY` | No | Skip TLS certificate verification (`yes`/`no`) |
 
 *Either `URL` or `HOST` + `PORT` is required.
+
+### Topology Grouping
+
+[dephealth-ui](https://github.com/BigKAA/dephealth-ui) groups topology endpoints by the reserved metric labels `dep_namespace` and `dep_group`. uniproxy exposes them as first-class configuration: instance-wide defaults plus per-dependency overrides.
+
+```bash
+# Instance-wide defaults for all dependencies:
+DEPHEALTH_DEP_NAMESPACE=external
+DEPHEALTH_DEP_GROUP=infra
+
+# Per-dependency override:
+DEPHEALTH_DB_DEP_NAMESPACE=db
+DEPHEALTH_DB_DEP_GROUP=data
+```
+
+The same fields are available in YAML (`depNamespace` / `depGroup`, global and per-dependency — see the example above) and in Helm (`config.depNamespace` / `config.depGroup` for global defaults).
+
+Values must match `[a-z][a-z0-9-]*` (1–63 characters). When set, all `app_dependency_*` metrics for the dependency get the `dep_namespace` / `dep_group` labels.
+
+**Priority** (most specific wins, env always overrides YAML):
+
+1. `DEPHEALTH_<NAME>_DEP_NAMESPACE` / `DEPHEALTH_<NAME>_DEP_GROUP` (per-dependency env)
+2. `DEPHEALTH_DEP_NAMESPACE` / `DEPHEALTH_DEP_GROUP` (global env)
+3. Per-dependency `depNamespace` / `depGroup` YAML fields
+4. Global `depNamespace` / `depGroup` YAML fields
+
+> [!NOTE]
+> For deployments on older uniproxy versions the same labels can be set through the dephealth SDK generic mechanism: `DEPHEALTH_<NAME>_LABEL_DEP_NAMESPACE` / `DEPHEALTH_<NAME>_LABEL_DEP_GROUP`. When both forms are set, the first-class variables win.
 
 ### Server Authentication
 
@@ -872,6 +907,8 @@ gateway:
 | `image.tag` | `""` (appVersion) | Image tag |
 | `config.name` | `""` (release name) | `DEPHEALTH_NAME` — application name |
 | `config.group` | `""` | `DEPHEALTH_GROUP` — logical group for metrics label |
+| `config.depNamespace` | `""` | `DEPHEALTH_DEP_NAMESPACE` — default `dep_namespace` topology label |
+| `config.depGroup` | `""` | `DEPHEALTH_DEP_GROUP` — default `dep_group` topology label |
 | `config.listenAddr` | `":8080"` | `LISTEN_ADDR` |
 | `config.checkInterval` | `"10"` | `DEPHEALTH_CHECK_INTERVAL` |
 | `config.timeout` | `""` | `DEPHEALTH_TIMEOUT` |
@@ -930,6 +967,8 @@ uniproxy is designed to work with [dephealth-ui](https://github.com/BigKAA/dephe
 2. Configure Prometheus to scrape uniproxy pods
 3. Point dephealth-ui to your Prometheus instance
 4. Use `?detail=true&depth=N` for deep dependency chain inspection
+
+For topology grouping by namespace/subgroup, set the `dep_namespace` / `dep_group` labels via [Topology Grouping](#topology-grouping) configuration.
 
 ## License
 
