@@ -109,6 +109,13 @@ dependencies:
     # Topology grouping override (optional, overrides the global default):
     # depNamespace: internal
     # depGroup: apps
+    # Custom metric labels for this dependency (optional). Label names must
+    # match [a-zA-Z_][a-zA-Z0-9_]* and must not be reserved (name, group,
+    # dependency, type, host, port, path, critical). Can also be set via
+    # DEPHEALTH_<NAME>_LABEL_<KEY> env vars (env wins per key).
+    # labels:
+    #   team: platform
+    #   tier: gold
     # Per-dependency check interval and timeout (override global).
     # checkInterval: "5s"
     # timeout: "3s"

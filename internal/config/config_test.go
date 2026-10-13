@@ -2877,3 +2877,154 @@ func TestLoad_DepTopologyLabels_TooLong(t *testing.T) {
 		t.Fatal("expected error for 64-character depGroup")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Custom per-dependency metric labels (LABELS / labels)
+// ---------------------------------------------------------------------------
+
+func TestLoad_DepLabels_EnvOnly(t *testing.T) {
+	setEnvs(t, map[string]string{
+		"DEPHEALTH_NAME":            "test-app",
+		"DEPHEALTH_GROUP":           "test",
+		"DEPHEALTH_DEPS":            "svc:http",
+		"DEPHEALTH_SVC_URL":         "http://svc.svc:8080",
+		"DEPHEALTH_SVC_CRITICAL":    "yes",
+		"DEPHEALTH_SVC_LABEL_TEST1": "value1",
+		"DEPHEALTH_SVC_LABEL_TEST2": "value2",
+	})
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	dep := cfg.Dependencies[0]
+	want := map[string]string{"test1": "value1", "test2": "value2"}
+	if len(dep.Labels) != len(want) {
+		t.Fatalf("dep.Labels = %v, want %v", dep.Labels, want)
+	}
+	for k, v := range want {
+		if dep.Labels[k] != v {
+			t.Errorf("dep.Labels[%q] = %q, want %q", k, dep.Labels[k], v)
+		}
+	}
+}
+
+func TestLoad_DepLabels_EnvOverridesYAMLPerKey(t *testing.T) {
+	yamlContent := `
+name: yaml-app
+group: test
+dependencies:
+  - name: web
+    type: http
+    url: "http://web.svc:8080"
+    critical: true
+    labels:
+      test1: yaml-value
+      test3: keep
+`
+	path := writeTestYAML(t, yamlContent)
+	setEnvs(t, map[string]string{
+		"CONFIG_FILE":               path,
+		"DEPHEALTH_WEB_LABEL_TEST1": "env-value",
+		"DEPHEALTH_WEB_LABEL_TEST2": "added-by-env",
+	})
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	dep := cfg.Dependencies[0]
+	want := map[string]string{
+		"test1": "env-value",    // env overrides YAML per key
+		"test2": "added-by-env", // env-only key is added
+		"test3": "keep",         // YAML-only key survives
+	}
+	if len(dep.Labels) != len(want) {
+		t.Fatalf("dep.Labels = %v, want %v", dep.Labels, want)
+	}
+	for k, v := range want {
+		if dep.Labels[k] != v {
+			t.Errorf("dep.Labels[%q] = %q, want %q", k, dep.Labels[k], v)
+		}
+	}
+}
+
+func TestLoad_DepLabels_InvalidName(t *testing.T) {
+	setEnvs(t, map[string]string{
+		"DEPHEALTH_NAME":           "test-app",
+		"DEPHEALTH_GROUP":          "test",
+		"DEPHEALTH_DEPS":           "svc:http",
+		"DEPHEALTH_SVC_URL":        "http://svc.svc:8080",
+		"DEPHEALTH_SVC_CRITICAL":   "yes",
+		"DEPHEALTH_SVC_LABEL_1BAD": "value",
+	})
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected error for invalid label name")
+	}
+	if !strings.Contains(err.Error(), "svc") || !strings.Contains(err.Error(), "1bad") {
+		t.Errorf("error %q should mention dependency name and label", err.Error())
+	}
+}
+
+func TestLoad_DepLabels_ReservedName(t *testing.T) {
+	setEnvs(t, map[string]string{
+		"DEPHEALTH_NAME":               "test-app",
+		"DEPHEALTH_GROUP":              "test",
+		"DEPHEALTH_DEPS":               "svc:http",
+		"DEPHEALTH_SVC_URL":            "http://svc.svc:8080",
+		"DEPHEALTH_SVC_CRITICAL":       "yes",
+		"DEPHEALTH_SVC_LABEL_CRITICAL": "no",
+	})
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected error for reserved label name")
+	}
+	if !strings.Contains(err.Error(), "reserved") {
+		t.Errorf("error %q should mention reserved label", err.Error())
+	}
+}
+
+func TestLoad_DepLabels_YAMLInvalidName(t *testing.T) {
+	yamlContent := `
+name: yaml-app
+group: test
+dependencies:
+  - name: web
+    type: http
+    url: "http://web.svc:8080"
+    critical: true
+    labels:
+      "bad-name": value
+`
+	path := writeTestYAML(t, yamlContent)
+	setEnvs(t, map[string]string{"CONFIG_FILE": path})
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected error for invalid YAML label name")
+	}
+	if !strings.Contains(err.Error(), "web") {
+		t.Errorf("error %q should mention dependency name", err.Error())
+	}
+}
+
+func TestLoad_DepLabels_NoneSet(t *testing.T) {
+	setEnvs(t, map[string]string{
+		"DEPHEALTH_NAME":         "test-app",
+		"DEPHEALTH_GROUP":        "test",
+		"DEPHEALTH_DEPS":         "svc:http",
+		"DEPHEALTH_SVC_URL":      "http://svc.svc:8080",
+		"DEPHEALTH_SVC_CRITICAL": "yes",
+	})
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Dependencies[0].Labels != nil {
+		t.Errorf("dep.Labels = %v, want nil", cfg.Dependencies[0].Labels)
+	}
+}

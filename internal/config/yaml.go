@@ -69,28 +69,29 @@ type yamlZoneAuth struct {
 // Duration fields (CheckInterval, Timeout) use strings for flexible parsing.
 // Auth is nested under an optional "auth" key.
 type yamlDep struct {
-	Name            string       `yaml:"name"`
-	Type            string       `yaml:"type"`
-	URL             string       `yaml:"url"`
-	Host            string       `yaml:"host"`
-	Port            string       `yaml:"port"`
-	Critical        bool         `yaml:"critical"`
-	DepNamespace    string       `yaml:"depNamespace"` // overrides the global depNamespace
-	DepGroup        string       `yaml:"depGroup"`     // overrides the global depGroup
-	HealthPath      string       `yaml:"healthPath"`
-	CheckInterval   string       `yaml:"checkInterval"`
-	Timeout         string       `yaml:"timeout"`
-	TLS             *bool        `yaml:"tls"`
-	TLSSkipVerify   *bool        `yaml:"tlsSkipVerify"`
-	HostHeader      string       `yaml:"hostHeader"`
-	GRPCServiceName string       `yaml:"grpcServiceName"`
-	GRPCAuthority   string       `yaml:"grpcAuthority"`
-	PostgresQuery   string       `yaml:"postgresQuery"`
-	MySQLQuery      string       `yaml:"mysqlQuery"`
-	RedisPassword   string       `yaml:"redisPassword"`
-	RedisDB         *int         `yaml:"redisDB"`
-	AMQPURL         string       `yaml:"amqpUrl"`
-	Auth            *yamlDepAuth `yaml:"auth"`
+	Name            string            `yaml:"name"`
+	Type            string            `yaml:"type"`
+	URL             string            `yaml:"url"`
+	Host            string            `yaml:"host"`
+	Port            string            `yaml:"port"`
+	Critical        bool              `yaml:"critical"`
+	DepNamespace    string            `yaml:"depNamespace"` // overrides the global depNamespace
+	DepGroup        string            `yaml:"depGroup"`     // overrides the global depGroup
+	Labels          map[string]string `yaml:"labels"`       // custom metric labels for this dependency
+	HealthPath      string            `yaml:"healthPath"`
+	CheckInterval   string            `yaml:"checkInterval"`
+	Timeout         string            `yaml:"timeout"`
+	TLS             *bool             `yaml:"tls"`
+	TLSSkipVerify   *bool             `yaml:"tlsSkipVerify"`
+	HostHeader      string            `yaml:"hostHeader"`
+	GRPCServiceName string            `yaml:"grpcServiceName"`
+	GRPCAuthority   string            `yaml:"grpcAuthority"`
+	PostgresQuery   string            `yaml:"postgresQuery"`
+	MySQLQuery      string            `yaml:"mysqlQuery"`
+	RedisPassword   string            `yaml:"redisPassword"`
+	RedisDB         *int              `yaml:"redisDB"`
+	AMQPURL         string            `yaml:"amqpUrl"`
+	Auth            *yamlDepAuth      `yaml:"auth"`
 
 	// LDAP-specific options.
 	LDAPCheckMethod   string `yaml:"ldapCheckMethod"`
@@ -204,6 +205,7 @@ func convertYAMLDep(yd *yamlDep) (Dependency, error) {
 		Critical:          yd.Critical,
 		DepNamespace:      yd.DepNamespace,
 		DepGroup:          yd.DepGroup,
+		Labels:            yd.Labels,
 		HealthPath:        yd.HealthPath,
 		TLS:               yd.TLS,
 		TLSSkipVerify:     yd.TLSSkipVerify,

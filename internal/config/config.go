@@ -231,6 +231,12 @@ type Dependency struct {
 	BasicPass   string            // password for HTTP/gRPC basic auth
 	Headers     map[string]string // HTTP-only: custom request headers
 	Metadata    map[string]string // gRPC-only: custom call metadata
+
+	// Custom labels attached to all metrics of this dependency. Populated from
+	// the YAML "labels" section and overlaid by DEPHEALTH_<NAME>_LABEL_<KEY>
+	// env vars (which the dephealth SDK also reads natively). Validated by
+	// validateMetricLabels against Prometheus naming rules.
+	Labels map[string]string
 }
 
 // Load parses configuration from YAML file (optional) and environment variables.
@@ -457,6 +463,7 @@ func applyEnvOverrides(cfg *Config) error {
 		for i := range cfg.Dependencies {
 			prefix := "DEPHEALTH_" + EnvName(cfg.Dependencies[i].Name) + "_"
 			resolveDepTopologyEnv(&cfg.Dependencies[i], prefix, globalNS, globalGrp)
+			applyDepEnvLabelOverlay(&cfg.Dependencies[i], prefix)
 			if err := loadDepAuth(&cfg.Dependencies[i], prefix, ga); err != nil {
 				return err
 			}
@@ -747,6 +754,9 @@ func validate(cfg *Config) error {
 			if err := validateTopologyLabel(dep.DepGroup); err != nil {
 				return fmt.Errorf("dependency %q: invalid DEP_GROUP/depGroup %q: %w", dep.Name, dep.DepGroup, err)
 			}
+		}
+		if err := validateMetricLabels(dep.Labels); err != nil {
+			return fmt.Errorf("dependency %q: invalid LABELS/labels: %w", dep.Name, err)
 		}
 		if err := validateAuth(dep); err != nil {
 			return err
@@ -1161,6 +1171,9 @@ func parseSingleDep(name, depType string, ga globalAuth) (Dependency, error) {
 	dep.DepNamespace = os.Getenv(prefix + "DEP_NAMESPACE")
 	dep.DepGroup = os.Getenv(prefix + "DEP_GROUP")
 
+	// Custom metric labels: DEPHEALTH_<NAME>_LABEL_<KEY> env vars.
+	applyDepEnvLabelOverlay(&dep, prefix)
+
 	// Type-specific options: each dependency type has its own set of optional env vars.
 	switch depType {
 	case "http":
@@ -1367,6 +1380,29 @@ func resolveDepTopologyEnv(dep *Dependency, prefix, globalNS, globalGrp string) 
 	}
 }
 
+// applyDepEnvLabelOverlay merges DEPHEALTH_<NAME>_LABEL_<KEY> env vars into
+// dep.Labels, overriding YAML values per key. The dephealth SDK reads these env
+// vars natively too, but merging them here keeps the global "env overrides
+// YAML" precedence (the SDK gives API-set labels priority over env labels) and
+// allows early validation of label names. The env suffix is lowercased to form
+// the label key, mirroring the SDK's own conversion.
+func applyDepEnvLabelOverlay(dep *Dependency, prefix string) {
+	envPrefix := prefix + "LABEL_"
+	for _, kv := range os.Environ() {
+		if !strings.HasPrefix(kv, envPrefix) {
+			continue
+		}
+		key, val, ok := strings.Cut(kv, "=")
+		if !ok {
+			continue
+		}
+		if dep.Labels == nil {
+			dep.Labels = make(map[string]string)
+		}
+		dep.Labels[strings.ToLower(key[len(envPrefix):])] = val
+	}
+}
+
 // parseTLSOptions parses TLS and TLS_SKIP_VERIFY boolean env vars for HTTP and gRPC
 // dependencies. Uses pointer types (*bool) so nil indicates "not set" (use checker default).
 func parseTLSOptions(dep *Dependency, name, prefix string) error {
@@ -1409,6 +1445,38 @@ func validateTopologyLabel(value string) error {
 	}
 	if !topologyLabelPattern.MatchString(value) {
 		return fmt.Errorf("must match [a-z][a-z0-9-]*, got %q", value)
+	}
+	return nil
+}
+
+// metricLabelNamePattern and reservedMetricLabels mirror the dephealth SDK
+// label rules (dephealth.ValidateLabelName) so config load fails early with a
+// dependency name in the error, before the SDK rejects the same labels.
+var (
+	metricLabelNamePattern = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
+	reservedMetricLabels   = map[string]bool{
+		"name":       true,
+		"group":      true,
+		"dependency": true,
+		"type":       true,
+		"host":       true,
+		"port":       true,
+		"path":       true,
+		"critical":   true,
+	}
+)
+
+// validateMetricLabels checks custom label names against Prometheus naming
+// conventions and the SDK reserved label set. Values are not restricted
+// (Prometheus allows empty label values).
+func validateMetricLabels(labels map[string]string) error {
+	for name := range labels {
+		if !metricLabelNamePattern.MatchString(name) {
+			return fmt.Errorf("label name %q must match [a-zA-Z_][a-zA-Z0-9_]*", name)
+		}
+		if reservedMetricLabels[name] {
+			return fmt.Errorf("label name %q is reserved", name)
+		}
 	}
 	return nil
 }

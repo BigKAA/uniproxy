@@ -274,6 +274,7 @@ func buildOptions(cfg *config.Config, logger *slog.Logger) ([]dephealth.Option, 
 // The function handles:
 //   - Connection source: URL-based or explicit host+port.
 //   - Critical flag: marks the dependency as critical for readiness.
+//   - Custom labels: user-defined labels from the per-dependency config.
 //   - IsEntry label: when isEntry is true, adds isentry=yes label for topology visualization.
 //   - Topology grouping labels: dep_namespace/dep_group for dephealth-ui grouping.
 //   - Per-dependency timing overrides (check interval, timeout).
@@ -293,6 +294,13 @@ func buildDependencyOption(dep config.Dependency, isEntry bool) (dephealth.Optio
 
 	// Mark whether this dependency is critical for the application's readiness.
 	depOpts = append(depOpts, dephealth.Critical(dep.Critical))
+
+	// Custom user-defined labels for all metrics of this dependency. Applied
+	// before the first-class labels below so that isentry/dep_namespace/
+	// dep_group keep winning when the same key is set both ways.
+	for k, v := range dep.Labels {
+		depOpts = append(depOpts, dephealth.WithLabel(k, v))
+	}
 
 	// Add isentry label for entry-point applications in topology visualization.
 	if isEntry {

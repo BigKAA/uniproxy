@@ -665,3 +665,143 @@ func TestBuildDependencyOption_DepTopologyLabels(t *testing.T) {
 		time.Sleep(250 * time.Millisecond)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Custom per-dependency metric labels
+// ---------------------------------------------------------------------------
+
+// TestBuildDependencyOption_CustomLabels verifies that per-dependency custom
+// labels reach the SDK and appear on the app_dependency_health metric after
+// the first check.
+func TestBuildDependencyOption_CustomLabels(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	host, port, err := net.SplitHostPort(srv.Listener.Addr().String())
+	if err != nil {
+		t.Fatalf("failed to split test server address: %v", err)
+	}
+
+	dep := config.Dependency{
+		Name:       "labeled-svc",
+		Type:       "http",
+		Host:       host,
+		Port:       port,
+		Critical:   true,
+		HealthPath: "/",
+		Labels: map[string]string{
+			"test1": "value1",
+			"test2": "value2",
+		},
+	}
+
+	opt, err := buildDependencyOption(dep, false)
+	if err != nil {
+		t.Fatalf("buildDependencyOption() error: %v", err)
+	}
+
+	reg := prometheus.NewRegistry()
+	dh, err := dephealth.New("labels-test", "test", dephealth.WithRegisterer(reg), opt)
+	if err != nil {
+		t.Fatalf("dephealth.New() error: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := dh.Start(ctx); err != nil {
+		t.Fatalf("Start() error: %v", err)
+	}
+	defer dh.Stop()
+
+	if !waitForMetricLabels(t, reg, map[string]string{"test1": "value1", "test2": "value2"}) {
+		t.Fatal("app_dependency_health sample with test1=value1 and test2=value2 not found within 15s")
+	}
+}
+
+// TestBuildDependencyOption_CustomLabelsLoseToFirstClass verifies that when a
+// custom label key collides with a first-class topology label, the first-class
+// value (dep_namespace) wins.
+func TestBuildDependencyOption_CustomLabelsLoseToFirstClass(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	host, port, err := net.SplitHostPort(srv.Listener.Addr().String())
+	if err != nil {
+		t.Fatalf("failed to split test server address: %v", err)
+	}
+
+	dep := config.Dependency{
+		Name:         "conflict-svc",
+		Type:         "http",
+		Host:         host,
+		Port:         port,
+		Critical:     true,
+		HealthPath:   "/",
+		DepNamespace: "external",
+		Labels:       map[string]string{"dep_namespace": "custom-loses"},
+	}
+
+	opt, err := buildDependencyOption(dep, false)
+	if err != nil {
+		t.Fatalf("buildDependencyOption() error: %v", err)
+	}
+
+	reg := prometheus.NewRegistry()
+	dh, err := dephealth.New("conflict-test", "test", dephealth.WithRegisterer(reg), opt)
+	if err != nil {
+		t.Fatalf("dephealth.New() error: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := dh.Start(ctx); err != nil {
+		t.Fatalf("Start() error: %v", err)
+	}
+	defer dh.Stop()
+
+	if !waitForMetricLabels(t, reg, map[string]string{"dep_namespace": "external"}) {
+		t.Fatal("app_dependency_health sample with dep_namespace=external (first-class wins) not found within 15s")
+	}
+}
+
+// waitForMetricLabels polls the registry until an app_dependency_health sample
+// carrying all wanted label pairs shows up, or the 15s deadline expires.
+func waitForMetricLabels(t *testing.T, reg *prometheus.Registry, want map[string]string) bool {
+	t.Helper()
+	deadline := time.Now().Add(15 * time.Second)
+	for {
+		mfs, err := reg.Gather()
+		if err != nil {
+			t.Fatalf("Gather() error: %v", err)
+		}
+		for _, mf := range mfs {
+			if mf.GetName() != "app_dependency_health" {
+				continue
+			}
+			for _, m := range mf.GetMetric() {
+				got := make(map[string]string, len(m.GetLabel()))
+				for _, lp := range m.GetLabel() {
+					got[lp.GetName()] = lp.GetValue()
+				}
+				match := true
+				for k, v := range want {
+					if got[k] != v {
+						match = false
+						break
+					}
+				}
+				if match {
+					return true
+				}
+			}
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+}
