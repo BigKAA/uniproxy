@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] - 2026-10-13
+
+### Added
+- **Per-dependency custom metric labels**
+  - Attach arbitrary labels to all `app_dependency_*` metrics of a dependency: `DEPHEALTH_<NAME>_LABEL_<KEY>` env vars (also read natively by the dephealth SDK) or a `labels` map in the YAML dependency config
+  - Env values override YAML per key, preserving the global env-over-YAML precedence
+  - Label names validated at config load time against Prometheus naming rules (`[a-zA-Z_][a-zA-Z0-9_]*`) and the reserved label set (`name`, `group`, `dependency`, `type`, `host`, `port`, `path`, `critical`)
+  - First-class topology labels (`dep_namespace` / `dep_group` / `isentry`) win when the same key is set both ways
+  - Documentation: "Custom Labels" sections in README (EN/RU)
+
+### Changed
+- N/A
+
+### Fixed
+- N/A
+
+### Security
+- N/A
+
 ## [0.8.0] - 2026-09-15
 
 ### Added
@@ -117,3 +136,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [0.7.1]: https://github.com/BigKAA/uniproxy/releases/v0.7.1
 
 [0.7.4]: https://github.com/BigKAA/uniproxy/compare/v0.7.3...v0.7.4
+
+[0.9.0]: https://github.com/BigKAA/uniproxy/compare/v0.8.0...v0.9.0
