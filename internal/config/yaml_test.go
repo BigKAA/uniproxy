@@ -718,3 +718,43 @@ dependencies:
 			db.DepNamespace, db.DepGroup)
 	}
 }
+
+func TestLoadFromYAML_DepLabels(t *testing.T) {
+	yamlContent := `
+name: yaml-app
+group: test
+dependencies:
+  - name: web
+    type: http
+    url: "http://web.svc:8080"
+    critical: true
+    labels:
+      test1: value1
+      test2: value2
+  - name: db
+    type: postgres
+    url: "postgres://pg.svc:5432/db"
+    critical: true
+`
+	path := writeTestYAML(t, yamlContent)
+	cfg, err := loadFromYAML(path)
+	if err != nil {
+		t.Fatalf("loadFromYAML() error: %v", err)
+	}
+
+	web := cfg.Dependencies[0]
+	want := map[string]string{"test1": "value1", "test2": "value2"}
+	if len(web.Labels) != len(want) {
+		t.Fatalf("web.Labels = %v, want %v", web.Labels, want)
+	}
+	for k, v := range want {
+		if web.Labels[k] != v {
+			t.Errorf("web.Labels[%q] = %q, want %q", k, web.Labels[k], v)
+		}
+	}
+
+	db := cfg.Dependencies[1]
+	if db.Labels != nil {
+		t.Errorf("db.Labels = %v, want nil", db.Labels)
+	}
+}

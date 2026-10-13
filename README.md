@@ -138,6 +138,9 @@ dependencies:
     critical: true
     healthPath: "/"
     depNamespace: internal   # overrides the global default
+    labels:                  # custom labels on all backend metrics
+      team: platform
+      tier: gold
   - name: cache
     type: redis
     host: redis.svc
@@ -216,6 +219,7 @@ For each dependency listed in `DEPHEALTH_DEPS`, configure it using environment v
 | `DEPHEALTH_<NAME>_CRITICAL` | Yes | Critical dependency flag (`yes`/`no`) |
 | `DEPHEALTH_<NAME>_DEP_NAMESPACE` | No | `dep_namespace` topology label override (see [Topology Grouping](#topology-grouping)) |
 | `DEPHEALTH_<NAME>_DEP_GROUP` | No | `dep_group` topology label override (see [Topology Grouping](#topology-grouping)) |
+| `DEPHEALTH_<NAME>_LABEL_<KEY>` | No | Custom label `<key>` on all metrics of the dependency (see [Custom Labels](#custom-labels)); may be repeated for multiple labels |
 | `DEPHEALTH_<NAME>_CHECK_INTERVAL` | No | Per-dependency check interval (seconds) |
 | `DEPHEALTH_<NAME>_TIMEOUT` | No | Per-dependency timeout (seconds) |
 | `DEPHEALTH_<NAME>_HEALTH_PATH` | No | HTTP health check path (default `/health`). For HTTP dependencies, any path in `url` is ignored — set the endpoint path via this variable |
@@ -267,6 +271,44 @@ Values must match `[a-z][a-z0-9-]*` (1–63 characters). When set, all `app_depe
 
 > [!NOTE]
 > For deployments on older uniproxy versions the same labels can be set through the dephealth SDK generic mechanism: `DEPHEALTH_<NAME>_LABEL_DEP_NAMESPACE` / `DEPHEALTH_<NAME>_LABEL_DEP_GROUP`. When both forms are set, the first-class variables win.
+
+### Custom Labels
+
+Arbitrary custom labels can be attached to all `app_dependency_*` metrics of a single dependency (per-dependency only; there are no instance-wide custom labels). Two equivalent forms are available:
+
+**Environment variables** — one variable per label, suffix becomes the label key (lowercased):
+
+```bash
+DEPHEALTH_HTTPBIN_LABEL_TEST1=value1
+DEPHEALTH_HTTPBIN_LABEL_TEST2=value2
+```
+
+**YAML** — a `labels` map on the dependency:
+
+```yaml
+dependencies:
+  - name: httpbin
+    type: http
+    url: "http://httpbin.org"
+    critical: true
+    labels:
+      test1: value1
+      test2: value2
+```
+
+Resulting metric sample:
+
+```
+app_dependency_health{...,test1="value1",test2="value2"} 1
+```
+
+**Rules:**
+
+- Label names must match `[a-zA-Z_][a-zA-Z0-9_]*` (Prometheus naming conventions).
+- Reserved names that cannot be used: `name`, `group`, `dependency`, `type`, `host`, `port`, `path`, `critical`.
+- When a key is set both in YAML and via an env variable, the env value wins (per key; other YAML labels are kept).
+- If the same key is also a first-class topology variable (`DEPHEALTH_<NAME>_DEP_NAMESPACE` / `_DEP_GROUP` / `DEPHEALTH_ISENTRY`), the first-class value wins.
+- A label key set on one dependency but not another is exported with an empty value for the latter.
 
 ### Server Authentication
 

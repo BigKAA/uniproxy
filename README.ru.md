@@ -138,6 +138,9 @@ dependencies:
     critical: true
     healthPath: "/"
     depNamespace: internal   # переопределяет глобальный дефолт
+    labels:                  # произвольные метки на всех метриках backend
+      team: platform
+      tier: gold
   - name: cache
     type: redis
     host: redis.svc
@@ -216,6 +219,7 @@ dependencies:
 | `DEPHEALTH_<ИМЯ>_CRITICAL` | Да | Критичная зависимость (`yes`/`no`) |
 | `DEPHEALTH_<ИМЯ>_DEP_NAMESPACE` | Нет | Переопределение топологической метки `dep_namespace` (см. [Группировка топологии](#группировка-топологии)) |
 | `DEPHEALTH_<ИМЯ>_DEP_GROUP` | Нет | Переопределение топологической метки `dep_group` (см. [Группировка топологии](#группировка-топологии)) |
+| `DEPHEALTH_<ИМЯ>_LABEL_<КЛЮЧ>` | Нет | Произвольная метка `<ключ>` на всех метриках зависимости (см. [Произвольные метки](#произвольные-метки)); повторяется для нескольких меток |
 | `DEPHEALTH_<ИМЯ>_CHECK_INTERVAL` | Нет | Интервал проверки (секунды) |
 | `DEPHEALTH_<ИМЯ>_TIMEOUT` | Нет | Таймаут проверки (секунды) |
 | `DEPHEALTH_<ИМЯ>_HEALTH_PATH` | Нет | Путь HTTP health-эндпоинта (по умолчанию `/health`). Для HTTP-зависимостей путь в `url` игнорируется — задавайте путь эндпоинта через эту переменную |
@@ -267,6 +271,44 @@ DEPHEALTH_DB_DEP_GROUP=data
 
 > [!NOTE]
 > Для деплоев на старых версиях uniproxy те же метки можно задать через универсальный механизм dephealth SDK: `DEPHEALTH_<ИМЯ>_LABEL_DEP_NAMESPACE` / `DEPHEALTH_<ИМЯ>_LABEL_DEP_GROUP`. При одновременной установке побеждают first-class переменные.
+
+### Произвольные метки
+
+К всем метрикам `app_dependency_*` конкретной зависимости можно прикрепить произвольные метки (только per-dependency; глобальных произвольных меток нет). Доступны две эквивалентные формы:
+
+**Переменные окружения** — одна переменная на метку, суффикс становится ключом метки (в нижнем регистре):
+
+```bash
+DEPHEALTH_HTTPBIN_LABEL_TEST1=value1
+DEPHEALTH_HTTPBIN_LABEL_TEST2=value2
+```
+
+**YAML** — секция `labels` у зависимости:
+
+```yaml
+dependencies:
+  - name: httpbin
+    type: http
+    url: "http://httpbin.org"
+    critical: true
+    labels:
+      test1: value1
+      test2: value2
+```
+
+Итоговая метрика:
+
+```
+app_dependency_health{...,test1="value1",test2="value2"} 1
+```
+
+**Правила:**
+
+- Имя метки должно соответствовать `[a-zA-Z_][a-zA-Z0-9_]*` (конвенции Prometheus).
+- Зарезервированные имена, использовать нельзя: `name`, `group`, `dependency`, `type`, `host`, `port`, `path`, `critical`.
+- Если ключ задан и в YAML, и через env — побеждает env (по ключу; остальные YAML-метки сохраняются).
+- Если ключ совпадает с first-class топологической переменной (`DEPHEALTH_<ИМЯ>_DEP_NAMESPACE` / `_DEP_GROUP` / `DEPHEALTH_ISENTRY`), побеждает first-class значение.
+- Ключ метки, заданный у одной зависимости и отсутствующий у другой, экспортируется для второй с пустым значением.
 
 ### Серверная аутентификация
 
